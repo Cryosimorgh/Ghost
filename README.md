@@ -81,3 +81,30 @@ The bundled `ghost.ico`, multi-resolution PNGs, and `ghost.svg` provide a consis
 ## Notes
 
 This is v1. Friends must be online for live messages and file transfers. Local history and saved identities stay in the browser used to create them. Back up your access key before clearing browser storage. A central hub is required even though media/file content is peer-to-peer.
+
+## v1.1 — responsive interface and microphone devices
+
+- The new Ghost mascot floats, blinks, peeks, darts, and glances toward a nearby mouse pointer. Clicking it makes it dodge. The animations are disabled if the OS requests reduced motion.
+- The phone/tablet layout has **People**, **Chat**, and **Audio** navigation instead of compacting the desktop layout into a strip.
+- Under **Audio**, choose an input microphone and, where supported, a playback device. Browser output selection uses `HTMLMediaElement.setSinkId`. Some browsers manage playback via the OS instead.
+- **Test mic** acquires the microphone locally, draws a frequency spectrum and input meter, and does not send the audio to the peer or speakers. **Start voice** acquires and processes the selected mic for WebRTC transmission. The SNR slider remains a gate threshold, not a magic quality enhancer.
+- The mic gain input is still an unrestricted numeric value in **dB** (dBi refers to antenna gain).
+
+## Android client (v1.1 preview)
+
+The Android APK is a **WebView client**, not an on-device Go hub. Start a shared HTTPS-enabled Ghost hub on a reachable host first. When the Android app opens, enter its `https://` URL. The Android device can then join the same accounts and calls as desktop users, with its own local IndexedDB chat history.
+
+- Android 10+ (API 29+); microphone access is requested when you use Test mic or Start voice.
+- Microphone selection uses WebRTC's browser device enumeration when exposed by Android WebView. Output routing is provided by Android `AudioManager` on Android 12+ when available; otherwise the OS controls output.
+- Android file offers use the system document picker. Receiver-triggered P2P file transfers save directly into **Downloads/Ghost** using the native Android bridge: no file bytes are uploaded to the signaling hub.
+- The preview APK is signed with an ephemeral **debug signing key** by GitHub Actions, not a long-term production key. You may need to uninstall an earlier preview before upgrading.
+- The Android client is intended for foreground use; it does not provide background calling, push notifications, or a local hub. Do not bypass HTTPS certificate errors.
+
+Compile locally (Android SDK + JDK 17 + Gradle 8.10.2):
+
+```bash
+gradle -p android :app:assembleDebug
+# android/app/build/outputs/apk/debug/app-debug.apk
+```
+
+The GitHub Actions workflow builds Windows, Linux, and Android preview artifacts and publishes them together as v1.1.0 after both jobs succeed.

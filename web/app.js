@@ -12,12 +12,15 @@ const ui = {
   iceState: $('iceState'), dataState: $('dataState'), voiceState: $('voiceState'), micState: $('micState'),
   levelFill: $('levelFill'), gain: $('gainInput'), snr: $('snrSlider'), gainValue: $('gainValue'), snrValue: $('snrValue'),
   incoming: $('incomingCall'), incomingName: $('incomingName'), incomingText: $('incomingText'),
-  remoteAudio: $('remoteAudio'), toast: $('toast')
+  remoteAudio: $('remoteAudio'), toast: $('toast'),
+  inputDevice: $('inputDevice'), outputDevice: $('outputDevice'), previewMic: $('previewMic'),
+  spectrum: $('micSpectrum'), spectrumStatus: $('spectrumStatus'), outputSupport: $('outputSupport')
 };
 let identity = null, localDB = null, iceServers = [], streamAbort = null, sessionId = crypto.randomUUID();
 let callId = '', hubOnline = false, friendState = { friends: [], incoming: [], outgoing: [] };
 let selectedId = null, selectedName = '', pc = null, peer = null, control = null, currentInvite = null, outgoingInvite = null;
-let queuedICE = [], media = null, activeCallSerial = 0;
+let queuedICE = [], media = null, previewMedia = null, activeCallSerial = 0;
+let meterFrame = 0, deviceRefreshing = false, selectedInput = '', selectedOutput = '';
 const sentFiles = new Map(), receivingFiles = new Map(), availableFiles = new Map();
 let sseRestart = null, toastTimer = null, renderVersion = 0, inviteTimeout = null;
 
@@ -85,6 +88,189 @@ function initControls() {
 }
 function updateSliders() { ui.snrValue.textContent = `${ui.snr.value} dB`; setRangePaint(ui.snr); }
 
+function selectedAudioConstraint() {
+  return { echoCancellation: true, noiseSuppression: true, autoGainControl: false,
+    ...(selectedInput ? { deviceId: { exact: selectedInput } } : {}) };
+}
+function fillDevices(select, entries, chosen, defaultLabel) {
+  select.replaceChildren();
+  const def = document.createElement('option'); def.value = ''; def.textContent = defaultLabel; select.append(def);
+  for (const [index, device] of entries.entries()) {
+    if (!device.deviceId || device.deviceId === 'default' || device.deviceId === 'communications') continue;
+    const option = document.createElement('option'); option.value = device.deviceId;
+    option.textContent = device.label || `${device.kind === 'audioinput' ? 'Microphone' : 'Speaker'} ${index + 1}`;
+    select.append(option);
+  }
+  select.value = chosen;
+  if (select.value !== chosen) select.value = '';
+}
+async function refreshAudioDevices() {
+  if (deviceRefreshing || !navigator.mediaDevices?.enumerateDevices) return;
+  deviceRefreshing = true;
+  try {
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    fillDevices(ui.inputDevice, devices.filter(d => d.kind === 'audioinput'), selectedInput, 'Default microphone');
+    const outputDevices = devices.filter(d => d.kind === 'audiooutput');
+    fillDevices(ui.outputDevice, outputDevices, selectedOutput, 'Default speakers');
+    const supportsSink = typeof ui.remoteAudio.setSinkId === 'function';
+    let nativeRoutes = [];
+    if (!supportsSink && window.GhostAndroid?.listAudioRoutes) {
+      try { nativeRoutes = JSON.parse(window.GhostAndroid.listAudioRoutes()); } catch (e) { console.warn('Android routes:',e); }
+      fillDevices(ui.outputDevice, nativeRoutes.map(d=>({deviceId:d.id,label:d.label,kind:'audiooutput'})), selectedOutput, 'System default');
+    }
+    ui.outputDevice.disabled = !(supportsSink ? outputDevices.length > 0 : nativeRoutes.length > 0);
+    ui.outputSupport.textContent = supportsSink ? 'Per-device' : nativeRoutes.length ? 'Android route' : 'System controlled';
+  } catch (error) { console.warn('Audio devices:', error); }
+  finally { deviceRefreshing = false; }
+}
+async function applyOutput() {
+  try {
+    if (typeof ui.remoteAudio.setSinkId === 'function') await ui.remoteAudio.setSinkId(selectedOutput);
+    else if (window.GhostAndroid?.setAudioRoute) {
+      if (!window.GhostAndroid.setAudioRoute(selectedOutput)) throw Error('Android route unavailable');
+    } else return;
+    localStorage.setItem('ghost.outputDevice', selectedOutput);
+  } catch (e) { toast(`Cannot switch playback: ${e.message}`, true); await refreshAudioDevices(); }
+}
+function wireAudioDevices() {
+  selectedInput = localStorage.getItem('ghost.inputDevice') || '';
+  selectedOutput = localStorage.getItem('ghost.outputDevice') || '';
+  $('refreshDevices').addEventListener('click', refreshAudioDevices);
+  ui.inputDevice.addEventListener('change', async () => {
+    selectedInput = ui.inputDevice.value; localStorage.setItem('ghost.inputDevice', selectedInput);
+    try {
+      if (media) { await disableMic(); await enableMic(); }
+      else if (previewMedia) { await stopPreviewMic(); await startPreviewMic(); }
+    } catch (e) { toast(`Microphone switch failed: ${e.message}`, true); }
+  });
+  ui.outputDevice.addEventListener('change', async () => {
+    selectedOutput = ui.outputDevice.value; await applyOutput();
+  });
+  ui.previewMic.addEventListener('click', async () => {
+    ui.previewMic.disabled = true;
+    try { if (previewMedia) await stopPreviewMic(); else await startPreviewMic(); }
+    catch (e) { toast(`Mic test: ${e.message}`, true); }
+    finally { ui.previewMic.disabled = false; }
+  });
+  if (navigator.mediaDevices?.addEventListener) navigator.mediaDevices.addEventListener('devicechange', refreshAudioDevices);
+  refreshAudioDevices().then(() => { if (selectedOutput) applyOutput(); });
+}
+
+function stopSpectrum() { if (meterFrame) cancelAnimationFrame(meterFrame); meterFrame = 0; }
+function updateMicDisplay() {
+  const m = media || previewMedia;
+  ui.micState.textContent = media ? 'TRANSMITTING' : previewMedia ? 'LOCAL TEST' : 'MIC OFF';
+  ui.previewMic.textContent = previewMedia ? 'Stop test' : 'Test mic';
+  ui.previewMic.disabled = !!media;
+  if (!m) { ui.levelFill.style.width = '0'; ui.spectrumStatus.textContent = 'Waiting for input'; drawSpectrum(null); }
+  else ui.spectrumStatus.textContent = media ? 'On air' : 'Local only';
+}
+function drawSpectrum(m) {
+  const canvas = ui.spectrum;
+  const ctx = canvas.getContext('2d'); if (!ctx) return;
+  const dpr = Math.min(2, window.devicePixelRatio || 1);
+  const w = Math.max(220, canvas.clientWidth || 260), h = Math.max(100, canvas.clientHeight || 130);
+  if (canvas.width !== Math.round(w*dpr) || canvas.height !== Math.round(h*dpr)) {
+    canvas.width = Math.round(w*dpr); canvas.height = Math.round(h*dpr);
+  }
+  ctx.setTransform(dpr,0,0,dpr,0,0);
+  ctx.clearRect(0,0,w,h);
+  ctx.lineWidth = 1;
+  ctx.strokeStyle = 'rgba(141,169,160,.12)';
+  for (let i=1;i<4;i++) { const y = Math.round(h*i/4)+.5; ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(w,y); ctx.stroke(); }
+  const count = Math.max(28, Math.min(68, Math.floor(w/6)));
+  const gap = 2.5, barW = (w - (count-1)*gap)/count;
+  let frequencies = null;
+  if (m?.analyser) {
+    frequencies = m.frequencyData ||= new Uint8Array(m.analyser.frequencyBinCount);
+    m.analyser.getByteFrequencyData(frequencies);
+  }
+  for (let i=0;i<count;i++) {
+    const freq = 80 * Math.pow(100, i / Math.max(1,count-1));
+    const bin = frequencies ? Math.max(1,Math.min(frequencies.length-1,Math.round(freq * m.analyser.fftSize / m.ctx.sampleRate))) : 0;
+    let v = frequencies ? frequencies[bin]/255 : 0;
+    v = Math.min(1,Math.pow(v,1.55)*1.26);
+    const height = Math.max(2, v*(h-8));
+    ctx.fillStyle = i > count*.72 ? 'rgba(158,197,182,.68)' : 'rgba(142,201,181,.84)';
+    ctx.fillRect(i*(barW+gap),h-height,barW,height);
+  }
+}
+function runMeter() {
+  stopSpectrum();
+  const frame = () => {
+    const m = media || previewMedia;
+    if (!m) { stopSpectrum(); updateMicDisplay(); return; }
+    const arr = m.timeData ||= new Uint8Array(m.analyser.fftSize);
+    m.analyser.getByteTimeDomainData(arr);
+    let power = 0; for (let i=0;i<arr.length;i++) power += ((arr[i]-128)/128)**2;
+    const rms = Math.sqrt(power/arr.length);
+    ui.levelFill.style.width = `${Math.min(100,Math.max(0,rms*430))}%`;
+    drawSpectrum(m);
+    meterFrame = requestAnimationFrame(frame);
+  };
+  updateMicDisplay(); meterFrame = requestAnimationFrame(frame);
+}
+async function startPreviewMic() {
+  if (media || previewMedia) return;
+  const stream = await navigator.mediaDevices.getUserMedia({ audio: selectedAudioConstraint(), video: false });
+  const ctx = new AudioContext();
+  try {
+    const source = ctx.createMediaStreamSource(stream);
+    const analyser = ctx.createAnalyser(); analyser.fftSize = 2048; analyser.smoothingTimeConstant = .84;
+    source.connect(analyser);
+    // A local test never connects to the speakers or the peer, preventing feedback.
+    await ctx.resume(); previewMedia = { stream, ctx, source, analyser };
+    await refreshAudioDevices(); runMeter();
+  } catch (e) { stream.getTracks().forEach(t=>t.stop()); await ctx.close(); throw e; }
+}
+async function stopPreviewMic() {
+  const m = previewMedia; previewMedia = null;
+  if (m) { m.stream.getTracks().forEach(t=>t.stop()); await m.ctx.close().catch(()=>{}); }
+  if (media) runMeter(); else { stopSpectrum(); updateMicDisplay(); }
+}
+
+// The mascot is playful without becoming a distracting screensaver.
+function wireGhosts() {
+  const reduced = window.matchMedia('(prefers-reduced-motion: reduce)');
+  const ghosts = () => [...document.querySelectorAll('.ghost-creature')];
+  let pointer = null;
+  window.addEventListener('pointermove', e => {
+    if (e.pointerType === 'touch') return;
+    pointer = { x:e.clientX, y:e.clientY };
+  }, { passive:true });
+  const blink = (g) => { g.classList.add('ghost-blink'); setTimeout(()=>g.classList.remove('ghost-blink'),190); };
+  function behavior() {
+    for (const g of ghosts()) {
+      if (reduced.matches) { g.style.setProperty('--look-x','0px'); g.style.setProperty('--look-y','0px'); continue; }
+      const box = g.getBoundingClientRect(); const x=box.left+box.width*.5, y=box.top+box.height*.46;
+      const inRange = pointer && Math.hypot(pointer.x-x,pointer.y-y) < (g.id==='heroGhost'?480:270);
+      const dx = inRange ? Math.max(-5,Math.min(5,(pointer.x-x)/35)) : 0;
+      const dy = inRange ? Math.max(-4,Math.min(4,(pointer.y-y)/40)) : 0;
+      g.style.setProperty('--look-x', `${dx.toFixed(1)}px`); g.style.setProperty('--look-y', `${dy.toFixed(1)}px`);
+    }
+    setTimeout(behavior, 65);
+  }
+  behavior();
+  const moods = ['ghost-sly','ghost-peek','ghost-dart'];
+  function idleBehavior() {
+    if (!reduced.matches) for (const g of ghosts()) {
+      if (Math.random() < .48) blink(g);
+      if (Math.random() < .33) {
+        const mood = moods[Math.floor(Math.random()*moods.length)];
+        g.classList.add(mood); setTimeout(()=>g.classList.remove(mood),900);
+      }
+    }
+    setTimeout(idleBehavior, 2600 + Math.random()*3500);
+  }
+  idleBehavior();
+  document.addEventListener('click',e=>{
+    const g=e.target.closest('.ghost-creature'); if (!g || reduced.matches) return;
+    g.classList.remove('ghost-dart'); void g.offsetWidth; g.classList.add('ghost-dart');
+    setTimeout(()=>g.classList.remove('ghost-dart'),900);
+  });
+}
+
+
 async function api(path, opts = {}) {
   const headers = { ...(identity ? { 'X-User-ID': identity.id, 'X-Auth-Token': identity.token, 'X-Session-ID': sessionId } : {}) };
   if (opts.body !== undefined) headers['Content-Type'] = 'application/json';
@@ -134,6 +320,7 @@ function setSelected(id, name) {
   const f = currentFriend(id);
   if (f) ui.dial.value = f.online && f.callId ? f.callId : '';
   renderFriends(); renderHistory(); updateState();
+  if (window.matchMedia('(max-width: 760px)').matches) { $('app').dataset.mobileView='chat'; document.querySelectorAll('.mobile-nav button').forEach(b=>b.classList.toggle('active',b.dataset.view==='chat')); }
 }
 function renderFriends() {
   ui.friends.replaceChildren(); ui.friendCount.textContent = String(friendState.friends.length);
@@ -188,6 +375,7 @@ function updateState() {
   ui.iceState.textContent = pc?.iceConnectionState || '—';
   ui.dataState.textContent = control?.readyState || 'Closed';
   ui.voiceState.textContent = media ? 'Transmitting' : 'Muted';
+  updateMicDisplay();
   ui.hubState.textContent = hubOnline ? 'Online' : 'Offline';
   ui.selfStatus.textContent = hubOnline ? 'Available for connections' : 'Not connected to hub';
   ui.presenceDot.classList.toggle('live', hubOnline);
@@ -355,7 +543,7 @@ async function onControl(msg) {
   } else if (msg.type === 'file-offer') {
     if (typeof msg.id !== 'string' || !/^[a-f0-9-]{36}$/.test(msg.id) || typeof msg.name !== 'string' || msg.name.length > 250 || !Number.isSafeInteger(msg.size) || msg.size < 0) return;
     availableFiles.set(msg.id, { ...msg, peerId: peer.id });
-    await recordEntry({ id: msg.id, contact: peer.id, direction: 'in', type: 'file', name: msg.name, size: msg.size, status: 'offered', ts: Date.now() });
+    await recordEntry({ id: msg.id, contact: peer.id, direction: 'in', type: 'file', name: msg.name, size: msg.size, mime: msg.mime, status: 'offered', ts: Date.now() });
   } else if (msg.type === 'file-request') {
     const offer = sentFiles.get(msg.id);
     if (!offer || offer.peerId !== peer.id || offer.sending) return;
@@ -423,8 +611,9 @@ async function renderHistory() {
 function renderEmpty(noContact) {
   const empty = node('div', 'empty-state');
   const symbol = node('div', 'wave-symbol'); for (let i = 0; i < 5; i++) symbol.append(node('span'));
-  empty.append(symbol, node('h1', '', noContact ? 'No noise. Just connection.' : 'A quiet beginning.'),
-    node('p', '', noContact ? 'Choose a friend or enter a live Call ID to open an encrypted peer-to-peer channel.' : 'Your messages and offered files will appear here. Connect to start.'));
+  const hero = $('brandGhost').cloneNode(true); hero.removeAttribute('id'); hero.id='heroGhost'; hero.classList.remove('brand-creature'); hero.classList.add('hero-creature');
+  empty.append(hero, node('h1', '', noContact ? 'Present. Until you need me.' : 'Just the two of you.'),
+    node('p', '', noContact ? 'Pick a person, or dial their live ID. The rest stays between you.' : 'When you connect, your messages and transfers live here.'));
   const list = node('div', 'empty-metadata');
   for (const [number, label] of [['01','DIRECT VOICE'],['02','MESSAGES'],['03','ON-DEMAND FILES']]) {
     const item = node('span'); item.append(node('b', '', number), document.createTextNode(label)); list.append(item);
@@ -447,15 +636,18 @@ async function offerFile(file) {
   sentFiles.set(id, { file, peerId, sending: false });
   try {
     sendControl({ type: 'file-offer', id, name: file.name, size: file.size, mime: file.type });
-    await recordEntry({ id, contact: peerId, direction: 'out', type: 'file', name: file.name, size: file.size, status: 'offered', ts: Date.now() });
+    await recordEntry({ id, contact: peerId, direction: 'out', type: 'file', name: file.name, size: file.size, mime: file.type, status: 'offered', ts: Date.now() });
     toast('Offer sent. File bytes remain local until Download is requested.');
   } catch (e) { sentFiles.delete(id); toast(e.message, true); }
 }
 async function requestFile(msg, button) {
   if (!peer || msg.contact !== peer.id || control?.readyState !== 'open' || receivingFiles.has(msg.id)) return;
   const offer = availableFiles.get(msg.id); if (!offer) return;
-  let writable = null;
-  if (window.showSaveFilePicker) {
+  let writable = null, nativeDownload = null;
+  if (window.GhostAndroid?.beginDownload) {
+    nativeDownload = window.GhostAndroid.beginDownload(msg.name, offer.mime || 'application/octet-stream');
+    if (!nativeDownload) { toast('Android could not create the download file', true); return; }
+  } else if (window.showSaveFilePicker) {
     try {
       const handle = await window.showSaveFilePicker({ suggestedName: msg.name.replace(/[\\/]/g, '_') });
       writable = await handle.createWritable();
@@ -464,9 +656,9 @@ async function requestFile(msg, button) {
     toast('This browser needs a download of 100 MB or less; use Chrome / Edge for large streamed files.', true); return;
   }
   button.disabled = true;
-  receivingFiles.set(msg.id, { id: msg.id, peerId: peer.id, expected: msg.size, received: 0, chunks: [], writable, name: msg.name, finished: false });
+  receivingFiles.set(msg.id, { id: msg.id, peerId: peer.id, expected: msg.size, received: 0, chunks: [], writable, nativeDownload, name: msg.name, finished: false });
   try { await updateFileStatus(msg.id, peer.id, 'requesting'); sendControl({ type: 'file-request', id: msg.id }); }
-  catch (e) { receivingFiles.delete(msg.id); try { await writable?.abort(); } catch {} toast(e.message, true); }
+  catch (e) { receivingFiles.delete(msg.id); try { await writable?.abort(); } catch {} if(nativeDownload) window.GhostAndroid.abortDownload(nativeDownload); toast(e.message, true); }
 }
 function bindIncomingFile(channel) {
   channel.binaryType = 'arraybuffer';
@@ -481,7 +673,9 @@ function bindIncomingFile(channel) {
         if (data !== '__QUIETLINK_END__' || transfer.received !== transfer.expected) throw Error('Incomplete file');
         transfer.finished = true;
         if (transfer.writable) await transfer.writable.close();
-        else {
+        else if (transfer.nativeDownload) {
+          if (!window.GhostAndroid.completeDownload(transfer.nativeDownload)) throw Error('Could not finalize Android download');
+        } else {
           const url = URL.createObjectURL(new Blob(transfer.chunks));
           const a = document.createElement('a'); a.href = url; a.download = transfer.name; document.body.append(a); a.click(); a.remove();
           setTimeout(() => URL.revokeObjectURL(url), 60000);
@@ -495,7 +689,11 @@ function bindIncomingFile(channel) {
         transfer.received += buf.byteLength;
         if (transfer.received > transfer.expected) throw Error('Received more bytes than advertised');
         if (transfer.writable) await transfer.writable.write(buf);
-        else transfer.chunks.push(buf);
+        else if (transfer.nativeDownload) {
+          const bytes = new Uint8Array(buf); let encoded = '';
+          for (let off=0;off<bytes.length;off+=8192) encoded += String.fromCharCode(...bytes.subarray(off,off+8192));
+          if (!window.GhostAndroid.appendDownload(transfer.nativeDownload, btoa(encoded))) throw Error('Android download write failed');
+        } else transfer.chunks.push(buf);
         if (transfer.received % (1024 * 1024) < buf.byteLength || transfer.received === transfer.expected) {
           await updateFileStatus(id, transfer.peerId, `${Math.round(100 * transfer.received / (transfer.expected || 1))}%`);
         }
@@ -504,6 +702,7 @@ function bindIncomingFile(channel) {
       if (transfer.finished) return;
       transfer.finished = true;
       try { await transfer.writable?.abort(); } catch {}
+      if (transfer.nativeDownload) window.GhostAndroid.abortDownload(transfer.nativeDownload);
       receivingFiles.delete(id); channel.close();
       await updateFileStatus(id, transfer.peerId, 'interrupted'); toast(`Download failed: ${error.message}`, true);
     });
@@ -512,6 +711,7 @@ function bindIncomingFile(channel) {
     chain.then(async () => {
       if (!transfer.finished) {
         transfer.finished = true; try { await transfer.writable?.abort(); } catch {}
+        if (transfer.nativeDownload) window.GhostAndroid.abortDownload(transfer.nativeDownload);
         receivingFiles.delete(id); await updateFileStatus(id, transfer.peerId, 'interrupted');
       }
     });
@@ -546,12 +746,13 @@ async function sendFile(id, offer) {
 }
 async function enableMic() {
   if (!pc) return;
-  const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: false }, video: false });
+  if (previewMedia) await stopPreviewMic();
+  const stream = await navigator.mediaDevices.getUserMedia({ audio: selectedAudioConstraint(), video: false });
   const ctx = new AudioContext();
   try {
     const source = ctx.createMediaStreamSource(stream);
     const gain = ctx.createGain(); gain.gain.value = gainFactor();
-    const analyser = ctx.createAnalyser(); analyser.fftSize = 1024; source.connect(analyser);
+    const analyser = ctx.createAnalyser(); analyser.fftSize = 2048; analyser.smoothingTimeConstant = .84; source.connect(analyser);
     const dst = ctx.createMediaStreamDestination();
     source.connect(gain);
     let gate = null;
@@ -563,7 +764,7 @@ async function enableMic() {
     await sender.replaceTrack(track);
     await ctx.resume();
     media = { stream, ctx, source, gain, gate, analyser, dst, track, sender };
-    ui.micState.textContent = 'MIC ACTIVE';
+    await refreshAudioDevices();
     runMeter(); updateState();
   } catch (e) {
     stream.getTracks().forEach(t => t.stop()); await ctx.close(); throw e;
@@ -575,20 +776,7 @@ async function disableMic() {
   try { await m.sender.replaceTrack(null); } catch {}
   m.stream.getTracks().forEach(t => t.stop()); m.track.stop();
   await m.ctx.close().catch(() => {});
-  ui.levelFill.style.width = '0'; ui.micState.textContent = 'MIC OFF'; updateState();
-}
-function runMeter() {
-  if (!media) return;
-  const arr = new Uint8Array(media.analyser.fftSize);
-  const frame = () => {
-    if (!media) return;
-    media.analyser.getByteTimeDomainData(arr);
-    let power = 0; for (let i=0;i<arr.length;i++) power += ((arr[i]-128)/128)**2;
-    const rms = Math.sqrt(power/arr.length);
-    ui.levelFill.style.width = `${Math.min(100, Math.max(0, rms*430))}%`;
-    requestAnimationFrame(frame);
-  };
-  requestAnimationFrame(frame);
+  if (previewMedia) runMeter(); else { stopSpectrum(); updateMicDisplay(); } updateState();
 }
 async function disconnect(notify = true) {
   if (notify && (peer || outgoingInvite)) await sendSignal(peer?.callId || outgoingInvite, 'hangup').catch(() => {});
@@ -597,7 +785,7 @@ async function disconnect(notify = true) {
   const old = pc; pc = null; peer = null; queuedICE = [];
   if (control) { control.onclose = null; control.close(); } control = null;
   if (old) old.close();
-  for (const r of receivingFiles.values()) { try { await r.writable?.abort(); } catch {} }
+  for (const r of receivingFiles.values()) { try { await r.writable?.abort(); } catch {} if(r.nativeDownload) window.GhostAndroid.abortDownload(r.nativeDownload); }
   receivingFiles.clear(); sentFiles.clear(); availableFiles.clear();
   ui.remoteAudio.srcObject = null; updateState(); renderHistory();
 }
@@ -671,8 +859,17 @@ async function copy(value) {
   try { await navigator.clipboard.writeText(value); toast('Copied to clipboard'); }
   catch { toast('Clipboard permission not available', true); }
 }
+function wireMobileNavigation() {
+  const buttons = [...document.querySelectorAll('.mobile-nav button')];
+  const choose = (view) => {
+    $('app').dataset.mobileView = view;
+    buttons.forEach(b=>{ b.classList.toggle('active',b.dataset.view===view); b.setAttribute('aria-current',b.dataset.view===view?'page':'false'); });
+  };
+  buttons.forEach(b=>b.addEventListener('click',()=>choose(b.dataset.view)));
+  choose('chat');
+}
 async function main() {
-  initControls(); await wireEvents();
+  initControls(); wireAudioDevices(); wireGhosts(); wireMobileNavigation(); renderEmpty(true); await wireEvents();
   try { localDB = await openHistoryDB(); }
   catch (e) { toast(`History storage unavailable: ${e.message}`, true); }
   try { const cfg = await api('/api/config'); iceServers = cfg.iceServers || []; }

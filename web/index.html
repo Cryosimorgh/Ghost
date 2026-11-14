@@ -11,9 +11,18 @@
   <script src="/static/app.js" defer></script>
 </head>
 <body>
-  <div class="app" id="app">
+  <div class="app" id="app" data-mobile-view="chat">
     <aside class="sidebar">
-      <div class="brand"><img class="brand-icon" src="/static/ghost.svg" alt="" aria-hidden="true"><span>ghost</span><span class="brandVersion">/ 01</span></div>
+      <div class="brand">
+        <button type="button" class="ghost-creature brand-creature" id="brandGhost" aria-label="Play with Ghost" title="Ghost is watching">
+          <svg class="ghost-art" viewBox="0 0 80 80" aria-hidden="true">
+            <path class="ghost-shadow" d="M16 68 Q40 75 64 68" />
+            <path class="ghost-body" d="M40 10 C20 10 12 26 12 44 L12 64 Q12 69 18 66 L27 61 Q32 58 36 64 Q40 70 46 64 Q51 58 57 62 L63 66 Q69 69 69 61 L69 42 C69 24 57 10 40 10Z" />
+            <g class="ghost-face"><ellipse class="ghost-eye left" cx="31" cy="37" rx="3.1" ry="4.1" /><ellipse class="ghost-eye right" cx="51" cy="37" rx="3.1" ry="4.1" /><path class="ghost-mouth" d="M36 47 Q42 53 49 45"/></g>
+            <path class="ghost-flush" d="M21 47 l5 -1 M54 47 l5 -1"/>
+          </svg>
+        </button><span class="wordmark">ghost</span><span class="brandVersion">PRIVATE / 02</span>
+      </div>
       <div class="side-scroll">
         <section class="identity card-dark">
           <div class="eyebrow">YOUR IDENTITY <span class="dot" id="presenceDot"></span></div>
@@ -48,15 +57,24 @@
 
     <aside class="inspector"><div class="inspector-head"><span class="eyebrow">CONTROL ROOM</span><span class="head-code">AUDIO / 01</span></div>
       <section class="inspector-section"><div class="inspector-heading">Input processing</div><p class="muted">Applies to your microphone before WebRTC transmission.</p>
+        <div class="device-group">
+          <div class="device-heading"><label for="inputDevice">Microphone</label><button type="button" class="link-minimal" id="refreshDevices">REFRESH</button></div>
+          <select class="device-select" id="inputDevice" aria-label="Microphone input device"><option value="">System default</option></select>
+          <div class="device-heading"><label for="outputDevice">Playback</label><span id="outputSupport" class="hint-inline">Output device</span></div>
+          <select class="device-select" id="outputDevice" aria-label="Audio output device"><option value="">System default</option></select>
+        </div>
         <div class="control-block"><div class="control-label"><label for="gainInput">Microphone gain</label><output id="gainValue">0 dB</output></div><div class="gain-stepper"><button type="button" id="gainDown" aria-label="Reduce microphone gain by 3 dB">−</button><div class="gain-field"><input type="number" id="gainInput" step="any" value="0" inputmode="decimal" aria-label="Microphone gain in decibels; unrestricted"><span>dB</span></div><button type="button" id="gainUp" aria-label="Increase microphone gain by 3 dB">+</button></div><p class="control-help">0 dB = unity. Positive boosts; negative attenuates. No artificial gain cap; clipping and device limits still apply.</p></div>
         <div class="control-block"><div class="control-label"><label for="snrSlider">SNR noise gate</label><output id="snrValue">6 dB</output></div><input class="range" type="range" id="snrSlider" min="0" max="24" value="6" step="1"><div class="range-label"><span>Off / low</span><span>Strict</span></div><p class="control-help">Minimum voice-to-background level for opening the microphone gate. It does not artificially raise signal quality.</p></div>
-        <div class="level-title"><span>INPUT LEVEL</span><span id="micState">MIC OFF</span></div><div class="meter"><div id="levelFill"></div></div>
+        <div class="spectrum-heading"><span class="level-title">LIVE SPECTRUM <span id="micState">MIC OFF</span></span><button type="button" class="test-mic-button" id="previewMic">Test mic</button></div>
+        <div class="spectrum-box"><canvas id="micSpectrum" role="img" aria-label="Live microphone frequency spectrum" width="520" height="180"></canvas><div class="spectrum-labels"><span>80 Hz</span><span id="spectrumStatus">Waiting for input</span><span>8 kHz</span></div></div>
+        <div class="meter"><div id="levelFill"></div></div>
       </section>
       <section class="inspector-section connection-inspector"><div class="inspector-heading">Transport</div><div class="stat-line"><span>Signaling hub</span><b id="hubState">Offline</b></div><div class="stat-line"><span>ICE state</span><b id="iceState">—</b></div><div class="stat-line"><span>Data channel</span><b id="dataState">Closed</b></div><div class="stat-line"><span>Voice</span><b id="voiceState">Muted</b></div><div class="stat-line"><span>Media path</span><b>Peer ↔ Peer</b></div></section>
-      <div class="inspector-bottom"><div class="bottom-index">QL — 001</div><p>The hub finds people and passes connection signals. Your conversations and file contents are not stored there.</p></div>
+      <div class="inspector-bottom"><div class="bottom-index">GHOST — 002</div><p>The hub finds people and passes connection signals. Your conversations and file contents are not stored there.</p></div>
     </aside>
   </div>
-  <div class="overlay" id="onboarding" hidden><form class="dialog" id="onboardingForm"><div class="mark dialog-mark" aria-hidden="true"><i></i><i></i><i></i><i></i></div><div class="eyebrow">WELCOME TO QUIETLINK</div><h2>Make a little space.</h2><p>Choose a name. You'll get a persistent Mail ID for friends and a temporary Call ID whenever you're online.</p><label for="nameInput">DISPLAY NAME</label><input id="nameInput" required maxlength="32" placeholder="What should people call you?" autocomplete="nickname"><button class="button primary full" type="submit">Create identity</button><span class="dialog-note">Your private access key stays in this browser. Back it up if you need to restore this identity.</span><button class="link-minimal restore-key" type="button" id="restoreButton">RESTORE AN EXISTING KEY</button><input type="file" id="restoreInput" accept="application/json,.json" hidden></form></div>
+  <nav class="mobile-nav" aria-label="App navigation"><button type="button" data-view="people">People</button><button type="button" data-view="chat" class="active">Chat</button><button type="button" data-view="audio">Audio</button></nav>
+  <div class="overlay" id="onboarding" hidden><form class="dialog" id="onboardingForm"><div class="mark dialog-mark" aria-hidden="true"><i></i><i></i><i></i><i></i></div><div class="eyebrow">WELCOME TO GHOST</div><h2>Make a little space.</h2><p>Choose a name. You'll get a persistent Mail ID for friends and a temporary Call ID whenever you're online.</p><label for="nameInput">DISPLAY NAME</label><input id="nameInput" required maxlength="32" placeholder="What should people call you?" autocomplete="nickname"><button class="button primary full" type="submit">Create identity</button><span class="dialog-note">Your private access key stays in this browser. Back it up if you need to restore this identity.</span><button class="link-minimal restore-key" type="button" id="restoreButton">RESTORE AN EXISTING KEY</button><input type="file" id="restoreInput" accept="application/json,.json" hidden></form></div>
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
   <audio id="remoteAudio" autoplay playsinline></audio>
 </body>

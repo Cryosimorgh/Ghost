@@ -13,26 +13,23 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  release:
+  desktop:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          persist-credentials: true
-      - name: Set up Go
-        uses: actions/setup-go@v5
+      - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-      - name: Run Go tests
-        run: go test ./...
-      - name: Render icons and compile Windows executable resource
+      - run: go test ./...
+      - run: node --check web/app.js
+      - name: Generate Windows icon resource
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq binutils-mingw-w64-x86-64 gcc-mingw-w64-x86-64-posix
           python3 -m pip install --user --quiet pillow cairosvg
           python3 scripts/build_icons.py
           x86_64-w64-mingw32-windres -i assets/ghost.rc -o rsrc_windows_amd64.syso
-      - name: Build portable desktop binaries
+      - name: Build Windows and Linux
         shell: bash
         run: |
           set -euo pipefail
@@ -40,26 +37,64 @@ jobs:
           GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags='-s -w -H=windowsgui' -o dist/windows/Ghost.exe .
           GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' -o dist/windows/Ghost-console.exe .
           GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' -o dist/linux/Ghost-linux-amd64 .
-          cp assets/ghost.ico dist/windows/ghost.ico
-          cp 'Start Ghost.cmd' README.md dist/windows/
-          cp README.md dist/linux/
-          cp assets/ghost-256.png dist/linux/ghost.png
-          (cd dist/windows && zip -q ../Ghost-Windows-v1.0.0.zip *)
-          (cd dist/linux && zip -q ../Ghost-Linux-v1.0.0.zip *)
-          git archive --format=zip HEAD -o dist/Ghost-Source-v1.0.0.zip
-          sha256sum dist/Ghost-*.zip > dist/SHA256SUMS.txt
-      - name: Publish v1.0.0 release (once)
+          cp assets/ghost.ico 'Start Ghost.cmd' README.md dist/windows/
+          cp README.md assets/ghost-256.png dist/linux/
+          (cd dist/windows && zip -q ../Ghost-Windows-v1.1.0.zip *)
+          (cd dist/linux && zip -q ../Ghost-Linux-v1.1.0.zip *)
+          git archive --format=zip HEAD -o dist/Ghost-Source-v1.1.0.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: desktop-packages
+          path: dist/Ghost-*.zip
+          if-no-files-found: error
+
+  android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+      - run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.10.2'
+      - name: Compile installable Android preview
+        run: gradle -p android :app:assembleDebug --no-daemon --stacktrace
+      - name: Stage APK
+        run: |
+          mkdir -p dist
+          cp android/app/build/outputs/apk/debug/app-debug.apk dist/Ghost-Android-v1.1.0-preview.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android-package
+          path: dist/Ghost-Android-v1.1.0-preview.apk
+          if-no-files-found: error
+
+  release:
+    needs: [desktop, android]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: '*-package*'
+          merge-multiple: true
+          path: dist
+      - name: Publish v1.1.0 without overwriting existing releases
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         shell: bash
         run: |
           set -euo pipefail
-          if gh release view v1.0.0 >/dev/null 2>&1; then
-            echo 'v1.0.0 already published; leaving it intact.'
+          sha256sum dist/Ghost-* > dist/SHA256SUMS.txt
+          if gh release view v1.1.0 >/dev/null 2>&1; then
+            echo 'v1.1.0 already exists; existing release preserved.'
             exit 0
           fi
-          git tag v1.0.0
-          git push origin v1.0.0
-          gh release create v1.0.0 dist/Ghost-Windows-v1.0.0.zip dist/Ghost-Linux-v1.0.0.zip dist/Ghost-Source-v1.0.0.zip dist/SHA256SUMS.txt \
-            --title 'Ghost v1.0.0' \
-            --notes 'Initial Go + WebRTC desktop release: direct voice/chat, receiver-approved P2P files, friend inbox and presence, local history, uncapped numeric microphone gain (dB), adjustable noise gate, and Windows tray integration. A shared HTTPS signaling hub is required for internet use. WebRTC end-to-end browser smoke testing remains unverified in the original build environment.'
+          gh release create v1.1.0 dist/Ghost-* dist/SHA256SUMS.txt \
+            --target "$GITHUB_SHA" \
+            --title 'Ghost v1.1.0 — Motion & mobile' \
+            --notes 'Responsive dark UI; interactive ghost with eye tracking and idle animations; local mic spectrum/test; selectable mic and playback devices; unlimited numeric gain in dB; Android WebView client (HTTPS hub required). Android APK is preview/debug-signed: uninstall it before installing later builds if their signature differs. Live end-to-end WebRTC browser testing remains unverified in the CI environment.'

@@ -1,0 +1,65 @@
+name: Build and publish Ghost
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ghost-release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Run Go tests
+        run: go test ./...
+      - name: Render icons and compile Windows executable resource
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq binutils-mingw-w64-x86-64
+          python3 -m pip install --user --quiet pillow cairosvg
+          python3 scripts/build_icons.py
+          x86_64-w64-mingw32-windres -i assets/ghost.rc -o rsrc_windows_amd64.syso
+      - name: Build portable desktop binaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist/windows dist/linux
+          GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags='-s -w -H=windowsgui' -o dist/windows/Ghost.exe .
+          GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' -o dist/windows/Ghost-console.exe .
+          GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' -o dist/linux/Ghost-linux-amd64 .
+          cp assets/ghost.ico dist/windows/ghost.ico
+          cp 'Start Ghost.cmd' README.md dist/windows/
+          cp README.md dist/linux/
+          cp assets/ghost-256.png dist/linux/ghost.png
+          (cd dist/windows && zip -q ../Ghost-Windows-v1.0.0.zip *)
+          (cd dist/linux && zip -q ../Ghost-Linux-v1.0.0.zip *)
+          git archive --format=zip HEAD -o dist/Ghost-Source-v1.0.0.zip
+          sha256sum dist/Ghost-*.zip > dist/SHA256SUMS.txt
+      - name: Publish v1.0.0 release (once)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if gh release view v1.0.0 >/dev/null 2>&1; then
+            echo 'v1.0.0 already published; leaving it intact.'
+            exit 0
+          fi
+          git tag v1.0.0
+          git push origin v1.0.0
+          gh release create v1.0.0 dist/Ghost-Windows-v1.0.0.zip dist/Ghost-Linux-v1.0.0.zip dist/Ghost-Source-v1.0.0.zip dist/SHA256SUMS.txt \
+            --title 'Ghost v1.0.0' \
+            --notes 'Initial Go + WebRTC desktop release: direct voice/chat, receiver-approved P2P files, friend inbox and presence, local history, uncapped numeric microphone gain (dB), adjustable noise gate, and Windows tray integration. A shared HTTPS signaling hub is required for internet use. WebRTC end-to-end browser smoke testing remains unverified in the original build environment.'

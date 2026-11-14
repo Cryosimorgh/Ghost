@@ -1,0 +1,11 @@
+# Runtime identity database (contains account metadata)
+*-data.json
+*.tmp
+# Build outputs
+Ghost.exe
+Ghost-console.exe
+Ghost-linux-amd64
+*.syso
+*.zip
+.DS_Store
+.ghost-seed.tar.xz

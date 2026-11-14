@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>Ghost — private connections</title>
+  <link rel="icon" type="image/png" sizes="32x32" href="/static/ghost-32.png">
+  <link rel="apple-touch-icon" href="/static/ghost-256.png">
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="/static/app.js" defer></script>
+</head>
+<body>
+  <div class="app" id="app">
+    <aside class="sidebar">
+      <div class="brand"><img class="brand-icon" src="/static/ghost.svg" alt="" aria-hidden="true"><span>ghost</span><span class="brandVersion">/ 01</span></div>
+      <div class="side-scroll">
+        <section class="identity card-dark">
+          <div class="eyebrow">YOUR IDENTITY <span class="dot" id="presenceDot"></span></div>
+          <div class="profile"><div class="avatar" id="selfAvatar">Q</div><div class="profile-copy"><strong id="selfName">—</strong><span id="selfStatus">Connecting to hub</span></div></div>
+          <div class="id-label">MAIL ID <span>persistent</span></div>
+          <div class="copyline"><code id="mailId">—</code><button class="icon-button" id="copyMail" title="Copy Mail ID" aria-label="Copy Mail ID">COPY</button></div>
+          <div class="id-label with-gap">LIVE CALL ID <span>changes each session</span></div>
+          <div class="copyline"><code id="callId">OFFLINE</code><button class="icon-button" id="copyCall" title="Copy live Call ID" aria-label="Copy live Call ID">COPY</button></div>
+        </section>
+        <div class="section-title"><span>PEOPLE</span><span class="count" id="friendCount">0</span></div>
+        <div id="friends" class="contact-list"><div class="empty-small">Your contacts will appear here.</div></div>
+        <div class="section-title inbox-title"><span>INBOX</span><span class="count" id="inboxCount">0</span></div>
+        <div id="inbox" class="inbox-list"><div class="empty-small">No new friend requests.</div></div>
+        <div class="add-area">
+          <label class="small-label" for="friendIdInput">ADD BY MAIL ID</label>
+          <form id="addFriendForm" class="inline-form"><input id="friendIdInput" maxlength="10" placeholder="Friend's Mail ID" autocomplete="off" spellcheck="false" required><button type="submit" title="Send friend request" aria-label="Send friend request">+</button></form>
+        </div>
+      </div>
+      <div class="sidebar-foot"><span class="secure-mark"></span><span>Peer-first. Stored locally.</span><button id="backupIdentity" class="link-minimal" title="Download a copy of your identity key">BACKUP KEY</button></div>
+    </aside>
+
+    <main class="main">
+      <header class="main-header"><div><div class="eyebrow">DIRECT CONNECTION <span class="slash">/</span> <span id="headerMode">STANDBY</span></div><div class="conversation-title" id="conversationTitle">Your space, your signal.</div></div><div class="connection-pill"><span class="dot" id="connectionDot"></span><span id="connectionLabel">Not connected</span></div></header>
+      <div class="toolbar"><div class="dial-wrap"><span class="toolbar-label">DIAL</span><input id="dialInput" maxlength="9" placeholder="Enter live Call ID" autocomplete="off" spellcheck="false"></div><button class="button primary" id="connectBtn">Connect</button><button class="button subtle" id="voiceBtn" disabled>Start voice</button><button class="button ghost" id="hangupBtn" disabled>Disconnect</button></div>
+      <div class="notice hidden" id="incomingCall"><div class="notice-copy"><strong id="incomingName">Incoming connection</strong><span id="incomingText">Someone wants to connect to you.</span></div><button class="button primary" id="acceptCall">Accept</button><button class="button ghost" id="declineCall">Decline</button></div>
+      <div class="chat-history" id="history" role="log" aria-live="polite">
+        <div class="empty-state"><div class="wave-symbol"><span></span><span></span><span></span><span></span><span></span></div><h1>No noise. Just connection.</h1><p>Choose a friend or enter a live Call ID to open an encrypted peer-to-peer channel.</p><div class="empty-metadata"><span><b>01</b> DIRECT VOICE</span><span><b>02</b> MESSAGES</span><span><b>03</b> ON-DEMAND FILES</span></div></div>
+      </div>
+      <form class="composer" id="composer"><button type="button" id="attachBtn" class="attach" aria-label="Attach a file" title="Offer a file" disabled>+</button><input id="fileInput" type="file" hidden><input id="messageInput" placeholder="Connect to a peer to send a message..." autocomplete="off" maxlength="12000" disabled><button class="send" id="sendBtn" type="submit" disabled>Send <span aria-hidden="true">↗</span></button></form>
+      <div class="composer-note"><span>WebRTC encrypted transport</span><span>Files transfer only when the receiver selects Download</span></div>
+    </main>
+
+    <aside class="inspector"><div class="inspector-head"><span class="eyebrow">CONTROL ROOM</span><span class="head-code">AUDIO / 01</span></div>
+      <section class="inspector-section"><div class="inspector-heading">Input processing</div><p class="muted">Applies to your microphone before WebRTC transmission.</p>
+        <div class="control-block"><div class="control-label"><label for="gainInput">Microphone gain</label><output id="gainValue">0 dB</output></div><div class="gain-stepper"><button type="button" id="gainDown" aria-label="Reduce microphone gain by 3 dB">−</button><div class="gain-field"><input type="number" id="gainInput" step="any" value="0" inputmode="decimal" aria-label="Microphone gain in decibels; unrestricted"><span>dB</span></div><button type="button" id="gainUp" aria-label="Increase microphone gain by 3 dB">+</button></div><p class="control-help">0 dB = unity. Positive boosts; negative attenuates. No artificial gain cap; clipping and device limits still apply.</p></div>
+        <div class="control-block"><div class="control-label"><label for="snrSlider">SNR noise gate</label><output id="snrValue">6 dB</output></div><input class="range" type="range" id="snrSlider" min="0" max="24" value="6" step="1"><div class="range-label"><span>Off / low</span><span>Strict</span></div><p class="control-help">Minimum voice-to-background level for opening the microphone gate. It does not artificially raise signal quality.</p></div>
+        <div class="level-title"><span>INPUT LEVEL</span><span id="micState">MIC OFF</span></div><div class="meter"><div id="levelFill"></div></div>
+      </section>
+      <section class="inspector-section connection-inspector"><div class="inspector-heading">Transport</div><div class="stat-line"><span>Signaling hub</span><b id="hubState">Offline</b></div><div class="stat-line"><span>ICE state</span><b id="iceState">—</b></div><div class="stat-line"><span>Data channel</span><b id="dataState">Closed</b></div><div class="stat-line"><span>Voice</span><b id="voiceState">Muted</b></div><div class="stat-line"><span>Media path</span><b>Peer ↔ Peer</b></div></section>
+      <div class="inspector-bottom"><div class="bottom-index">QL — 001</div><p>The hub finds people and passes connection signals. Your conversations and file contents are not stored there.</p></div>
+    </aside>
+  </div>
+  <div class="overlay" id="onboarding" hidden><form class="dialog" id="onboardingForm"><div class="mark dialog-mark" aria-hidden="true"><i></i><i></i><i></i><i></i></div><div class="eyebrow">WELCOME TO QUIETLINK</div><h2>Make a little space.</h2><p>Choose a name. You'll get a persistent Mail ID for friends and a temporary Call ID whenever you're online.</p><label for="nameInput">DISPLAY NAME</label><input id="nameInput" required maxlength="32" placeholder="What should people call you?" autocomplete="nickname"><button class="button primary full" type="submit">Create identity</button><span class="dialog-note">Your private access key stays in this browser. Back it up if you need to restore this identity.</span><button class="link-minimal restore-key" type="button" id="restoreButton">RESTORE AN EXISTING KEY</button><input type="file" id="restoreInput" accept="application/json,.json" hidden></form></div>
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  <audio id="remoteAudio" autoplay playsinline></audio>
+</body>
+</html>

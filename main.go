@@ -34,12 +34,14 @@ type User struct {
 	ID        string   `json:"id"`
 	Name      string   `json:"name"`
 	TokenHash string   `json:"token_hash"`
+	RemoteKey string   `json:"remote_key,omitempty"`
 	Friends   []string `json:"friends"`
 	Incoming  []string `json:"incoming"`
 	Outgoing  []string `json:"outgoing"`
 }
 type State struct {
-	Users map[string]*User `json:"users"`
+	Users map[string]*User  `json:"users"`
+	Peers map[string]string `json:"peers,omitempty"`
 }
 type Session struct {
 	UserID  string
@@ -60,6 +62,7 @@ type Hub struct {
 	calls                       map[string]*Session // ephemeral call ID -> connection
 	stun                        []string
 	turnURL, turnUser, turnPass string
+	mesh                        *Mesh
 }
 type Friend struct {
 	ID     string `json:"id"`
@@ -163,7 +166,7 @@ func (h *Hub) user(r *http.Request) *User {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	u := h.state.Users[id]
-	if u == nil {
+	if u == nil || u.RemoteKey != "" {
 		return nil
 	}
 	expected, err := hex.DecodeString(u.TokenHash)
@@ -284,6 +287,12 @@ func (h *Hub) makeFriendLocked(id string) Friend {
 		return Friend{ID: id, Name: "Unknown"}
 	}
 	call, online := h.onlineLocked(id)
+	if u.RemoteKey != "" && h.mesh != nil {
+		p, mu := h.mesh.findUser(id)
+		if p != nil && p.Key == u.RemoteKey {
+			call, online = mu.CallID, true
+		}
+	}
 	return Friend{ID: u.ID, Name: u.Name, Online: online, CallID: call}
 }
 func (h *Hub) friendsLocked(id string) FriendState {
@@ -360,6 +369,50 @@ func (h *Hub) requestFriend(w http.ResponseWriter, r *http.Request) {
 	defer h.mu.Unlock()
 	other := h.state.Users[q.ID]
 	u := h.state.Users[me.ID]
+	if (other == nil || other.RemoteKey != "") && h.mesh != nil {
+		// Find a remote user in the decentralized peer directory. Network I/O
+		// occurs outside h.mu; the remote request is signed with our node key.
+		h.mu.Unlock()
+		peer, profile := h.mesh.findUser(q.ID)
+		if peer == nil {
+			h.mu.Lock()
+			http.Error(w, "Mail ID not on this node or discovered peers", 404)
+			return
+		}
+		if h.mesh.localCall(me.ID) == "" {
+			h.mu.Lock()
+			http.Error(w, "Open the app to send a friend request", 409)
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		err := h.mesh.post(ctx, peer, "/p2p/friend/request", map[string]any{"from": MeshUser{ID: me.ID, Name: me.Name, CallID: h.mesh.localCall(me.ID)}, "to": q.ID})
+		cancel()
+		h.mu.Lock()
+		if err != nil {
+			http.Error(w, err.Error(), 502)
+			return
+		}
+		u = h.state.Users[me.ID]
+		other = h.state.Users[q.ID]
+		if other != nil && other.RemoteKey != peer.Key {
+			http.Error(w, "Mail ID collision", 409)
+			return
+		}
+		if other == nil {
+			other = &User{ID: q.ID, Name: profile.Name, RemoteKey: peer.Key}
+			h.state.Users[q.ID] = other
+		}
+		if !contains(u.Outgoing, q.ID) && !contains(u.Friends, q.ID) {
+			u.Outgoing = append(u.Outgoing, q.ID)
+		}
+		if err := h.saveLocked(); err != nil {
+			http.Error(w, "Storage failure", 500)
+			return
+		}
+		h.emitLocked(u.ID, Event{Type: "inbox"})
+		sendJSON(w, 200, map[string]bool{"ok": true})
+		return
+	}
 	if other == nil || other.ID == u.ID {
 		http.Error(w, "No such other Mail ID", 404)
 		return
@@ -412,6 +465,34 @@ func (h *Hub) respondFriend(w http.ResponseWriter, r *http.Request) {
 	defer h.mu.Unlock()
 	u := h.state.Users[me.ID]
 	other := h.state.Users[q.ID]
+	if other != nil && other.RemoteKey != "" && contains(u.Incoming, q.ID) && h.mesh != nil {
+		peer := h.mesh.peer(other.RemoteKey)
+		if peer == nil {
+			http.Error(w, "Remote peer not reachable", 502)
+			return
+		}
+		h.mu.Unlock()
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		err := h.mesh.post(ctx, peer, "/p2p/friend/respond", map[string]any{"from": me.ID, "to": q.ID, "accept": q.Accept})
+		cancel()
+		h.mu.Lock()
+		if err != nil {
+			http.Error(w, err.Error(), 502)
+			return
+		}
+		u = h.state.Users[me.ID]
+		u.Incoming = remove(u.Incoming, q.ID)
+		if q.Accept && !contains(u.Friends, q.ID) {
+			u.Friends = append(u.Friends, q.ID)
+		}
+		if err := h.saveLocked(); err != nil {
+			http.Error(w, "Storage failure", 500)
+			return
+		}
+		h.emitLocked(me.ID, Event{Type: "inbox"})
+		sendJSON(w, 200, map[string]bool{"ok": true})
+		return
+	}
 	if other == nil || !contains(u.Incoming, q.ID) {
 		http.Error(w, "Invitation not found", 404)
 		return
@@ -554,6 +635,24 @@ func (h *Hub) signal(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	to := h.calls[q.To]
+	if to == nil && h.mesh != nil {
+		peer := h.mesh.findCall(q.To)
+		if peer == nil {
+			http.Error(w, "Call ID is offline or its node is undiscovered", 404)
+			return
+		}
+		h.mu.Unlock()
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		err := h.mesh.sendSignal(ctx, peer, from, u.Name, q.To, q.Kind, q.Data)
+		cancel()
+		h.mu.Lock()
+		if err != nil {
+			http.Error(w, err.Error(), 502)
+			return
+		}
+		sendJSON(w, 200, map[string]bool{"ok": true})
+		return
+	}
 	if to == nil || to == from {
 		http.Error(w, "Call ID is offline", 404)
 		return
@@ -589,6 +688,10 @@ func (h *Hub) routes() http.Handler {
 	mux.HandleFunc("/api/friend/respond", h.respondFriend)
 	mux.HandleFunc("/api/events", h.events)
 	mux.HandleFunc("/api/signal", h.signal)
+	if h.mesh != nil {
+		mux.HandleFunc("/api/peers", h.mesh.apiStatus)
+		mux.HandleFunc("/api/peers/connect", h.mesh.apiConnect)
+	}
 	assets, _ := fs.Sub(webAssets, "web")
 	mux.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.FS(assets))))
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
@@ -627,15 +730,24 @@ func originFor(r *http.Request) string {
 func main() {
 	tray := flag.Bool("tray", runtime.GOOS == "windows", "show Ghost in the Windows notification area; includes Open and Exit")
 	open := flag.Bool("open", runtime.GOOS == "windows" || (runtime.GOOS == "linux" && (os.Getenv("DISPLAY") != "" || os.Getenv("WAYLAND_DISPLAY") != "")), "open the local web interface after starting the hub")
-	listen := flag.String("listen", "127.0.0.1:8787", "listen address; use 0.0.0.0:8787 to accept remote clients")
+	listen := flag.String("listen", "127.0.0.1:8787", "local web UI listen address")
+	meshListen := flag.String("peer-listen", "0.0.0.0:8788", "peer discovery and signaling TCP listener")
+	advertise := flag.String("peer-advertise", "", "externally reachable http(s)://hostname:port for your peer listener")
+	peerCert := flag.String("peer-tls-cert", "", "TLS certificate for direct peer listener only")
+	peerKey := flag.String("peer-tls-key", "", "TLS private key for direct peer listener only")
+	meshEnabled := flag.Bool("peers", true, "enable direct node-to-node discovery and signaling")
+	lan := flag.Bool("lan", true, "enable multicast LAN peer discovery")
 	data := flag.String("data", "ghost-data.json", "hub identity and friend mailbox database (not message history)")
 	cert := flag.String("tls-cert", "", "TLS certificate PEM (for remote mic access)")
 	key := flag.String("tls-key", "", "TLS private key PEM")
-	stun := flag.String("stun", "stun:stun.l.google.com:19302,stun:stun.cloudflare.com:3478", "comma-separated STUN server URLs")
+	stun := flag.String("stun", "", "comma-separated optional STUN server URLs (empty by default, no external infrastructure)")
 	turn := flag.String("turn-url", "", "TURN URLs, comma-separated (e.g. turn:relay.example.org:3478)")
 	turnUser := flag.String("turn-user", "", "TURN username")
 	turnPass := flag.String("turn-pass", "", "TURN credential")
 	flag.Parse()
+	if (*peerCert == "") != (*peerKey == "") {
+		log.Fatal("Provide both -peer-tls-cert and -peer-tls-key")
+	}
 	if (*cert == "") != (*key == "") {
 		log.Fatal("Provide both -tls-cert and -tls-key")
 	}
@@ -650,6 +762,20 @@ func main() {
 		}
 	}
 	h.turnURL, h.turnUser, h.turnPass = *turn, *turnUser, *turnPass
+	if *meshEnabled {
+		private, err := meshKey(*data + ".nodekey")
+		if err != nil {
+			log.Fatalf("Cannot initialize node key: %v", err)
+		}
+		mesh := newMesh(h, private)
+		h.mesh = mesh
+		if err = mesh.start(*meshListen, *advertise, *peerCert, *peerKey, *lan); err != nil {
+			log.Fatalf("Cannot start P2P node: %v", err)
+		}
+		defer mesh.close()
+		go mesh.restorePeers()
+		log.Printf("Ghost peer listener at %s (node key %s...)", mesh.url, mesh.public[:12])
+	}
 	srv := &http.Server{Addr: *listen, Handler: h.routes(), ReadHeaderTimeout: 8 * time.Second, IdleTimeout: 90 * time.Second, MaxHeaderBytes: 1 << 20, BaseContext: func(net.Listener) context.Context { return context.Background() }}
 	protocol := "http"
 	if *cert != "" {

@@ -44,9 +44,9 @@ jobs:
           cp dist/windows/Ghost.exe dist/Ghost-Windows-amd64.exe
           cp dist/linux/Ghost-linux-amd64 dist/Ghost-Linux-amd64
           chmod +x dist/Ghost-Linux-amd64
-          (cd dist/windows && zip -q ../Ghost-Windows-v1.1.1.zip *)
-          (cd dist/linux && zip -q ../Ghost-Linux-v1.1.1.zip *)
-          git archive --format=zip HEAD -o dist/Ghost-Source-v1.1.1.zip
+          (cd dist/windows && zip -q ../Ghost-Windows-v1.2.0.zip *)
+          (cd dist/linux && zip -q ../Ghost-Linux-v1.2.0.zip *)
+          git archive --format=zip HEAD -o dist/Ghost-Source-v1.2.0.zip
       - uses: actions/upload-artifact@v4
         with:
           name: desktop-packages
@@ -64,7 +64,7 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
-      - uses: android-actions/setup-android@v4
+      - uses: android-actions/setup-android@v3
       - run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0'
       - uses: gradle/actions/setup-gradle@v4
         with:
@@ -74,11 +74,11 @@ jobs:
       - name: Stage APK
         run: |
           mkdir -p dist
-          cp android/app/build/outputs/apk/debug/app-debug.apk dist/Ghost-Android-v1.1.1-preview.apk
+          cp android/app/build/outputs/apk/debug/app-debug.apk dist/Ghost-Android-v1.2.0-preview.apk
       - uses: actions/upload-artifact@v4
         with:
           name: android-package
-          path: dist/Ghost-Android-v1.1.1-preview.apk
+          path: dist/Ghost-Android-v1.2.0-preview.apk
           if-no-files-found: error
 
   release:
@@ -89,7 +89,7 @@ jobs:
         with:
           name: desktop-packages
           path: dist
-      - name: Publish v1.1.1 without overwriting existing releases
+      - name: Publish v1.2.0 without overwriting existing releases
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
@@ -97,11 +97,11 @@ jobs:
         run: |
           set -euo pipefail
           sha256sum dist/Ghost-* > dist/SHA256SUMS.txt
-          if gh release view v1.1.1 >/dev/null 2>&1; then
-            echo 'v1.1.1 already exists; existing release preserved.'
+          if gh release view v1.2.0 >/dev/null 2>&1; then
+            echo 'v1.2.0 already exists; existing release preserved.'
             exit 0
           fi
-          gh release create v1.1.1 dist/Ghost-* dist/SHA256SUMS.txt \
+          gh release create v1.2.0 dist/Ghost-* dist/SHA256SUMS.txt \
             --target "$GITHUB_SHA" \
-            --title 'Ghost v1.1.1 — Standalone desktop' \
-            --notes 'Standalone desktop: download and launch Ghost-Windows-amd64.exe or Ghost-Linux-amd64 (chmod +x first). All UI assets are embedded. No Java, Node.js, Go installation, npm, or external server runtime required. A normal system browser is used for the UI. Windows tray is built in. Linux desktop launches the browser automatically; headless mode: -open=false. Android preview is separately available in v1.1.0. Live WebRTC end-to-end testing remains unverified.'
+            --title 'Ghost v1.2.0 — Independent P2P nodes' \
+            --notes 'Independent Ghost nodes: no shared hub needed. Automatic LAN multicast discovery; manually entered peer addresses for remote networks; signed Ed25519 node signaling; cross-node friend requests, presence and WebRTC call setup. Windows/Linux are standalone Go executables. No public STUN server by default. A direct route/port forwarding is necessary for internet peers; no global DHT or automatic NAT traversal. Android v1.1 is not yet a standalone node. Live browser-to-browser WebRTC remains unverified.'

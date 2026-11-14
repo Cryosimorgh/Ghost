@@ -1,143 +1,119 @@
 # Ghost
 
-**Peer-to-peer voice, chat, and file sharing.** Ghost is a small Go-hosted WebRTC messenger with a quiet dark interface, an animated ghost mascot, a friend-request inbox, and local message history.
+**Voice, chat, and receiver-approved file sharing — peer to peer, without a Ghost-operated server.**
 
-[**Download for Windows**](https://github.com/Cryosimorgh/Ghost/releases/download/v1.1.1/Ghost-Windows-amd64.exe) · [**Download for Linux**](https://github.com/Cryosimorgh/Ghost/releases/download/v1.1.1/Ghost-Linux-amd64) · [**Android preview**](https://github.com/Cryosimorgh/Ghost/releases/download/v1.1.0/Ghost-Android-v1.1.0-preview.apk) · [**All releases**](https://github.com/Cryosimorgh/Ghost/releases)
+Ghost is a lightweight Go desktop application with a local web UI, an animated ghost, contacts, WebRTC calls, messages, and local history. **Each desktop instance runs its own node**; two users do not have to connect to the same hub.
 
-> **Current desktop release: v1.1.1.** Windows and Linux downloads are self-contained native executables: **no Java, Node.js, npm, or Go installation** is needed. They host the UI locally in your **existing web browser**. The Android build is an experimental client, not a standalone hub.
+[**Windows EXE**](https://github.com/Cryosimorgh/Ghost/releases/download/v1.2.0/Ghost-Windows-amd64.exe) · [**Linux binary**](https://github.com/Cryosimorgh/Ghost/releases/download/v1.2.0/Ghost-Linux-amd64) · [**Releases**](https://github.com/Cryosimorgh/Ghost/releases) · [**Issues**](https://github.com/Cryosimorgh/Ghost/issues)
 
-## What it does
+> **Scope of v1.2.0:** Server-free LAN discovery and direct-address internet connectivity are implemented and covered by two-node signaling integration tests. **There is no automatic global internet directory or DHT yet**, and NAT/firewall restrictions can prevent direct connections. The Android v1.1 preview is still a WebView client of a reachable desktop node, **not a fully standalone decentralized Android node**. Live two-browser WebRTC media/data transfer has not yet been independently verified.
 
-| | |
-| --- | --- |
-| **Voice** | Direct WebRTC audio with microphone selection, selectable output where supported, unrestricted numeric gain in **dB**, and an adjustable 0–24 dB SNR noise gate |
-| **Mic preview** | Local microphone test, live frequency spectrum, and input level display |
-| **Messaging** | WebRTC data-channel messages with per-device history in browser IndexedDB |
-| **Files** | Offer a file by metadata; its bytes remain with the sender **until the recipient chooses Download** |
-| **Contacts** | Persistent Mail ID, friend requests and inbox, online presence, and session-specific Call IDs |
-| **Interface** | Responsive People / Chat / Audio views, animated ghost with pointer-tracking eyes, and reduced-motion support |
-| **Desktop** | Single native Go executable with embedded frontend, Windows tray controls, and Linux desktop browser launching |
+## Quick start
 
-The built-in inbox manages friend requests; it is **not SMTP or an offline message-delivery system**.
+**Windows (x64):** download [Ghost-Windows-amd64.exe](https://github.com/Cryosimorgh/Ghost/releases/download/v1.2.0/Ghost-Windows-amd64.exe), run it, and allow local-network access through Windows Firewall when prompted. Ghost runs in the notification tray and opens your browser automatically.
 
-## Install and run
-
-### Windows (x64)
-
-1. Download [**Ghost-Windows-amd64.exe**](https://github.com/Cryosimorgh/Ghost/releases/download/v1.1.1/Ghost-Windows-amd64.exe).
-2. Run it. Ghost starts the local hub at `http://127.0.0.1:8787` and opens your browser.
-3. Find Ghost in the notification area (system tray) for **Open** and **Exit**.
-
-No installer or additional runtime is necessary. The [Windows ZIP](https://github.com/Cryosimorgh/Ghost/releases/download/v1.1.1/Ghost-Windows-v1.1.1.zip) also contains a console executable for troubleshooting or server operation.
-
-### Linux (x86-64)
-
-Download [**Ghost-Linux-amd64**](https://github.com/Cryosimorgh/Ghost/releases/download/v1.1.1/Ghost-Linux-amd64), then:
+**Linux (x86-64):** download [Ghost-Linux-amd64](https://github.com/Cryosimorgh/Ghost/releases/download/v1.2.0/Ghost-Linux-amd64):
 
 ```bash
 chmod +x Ghost-Linux-amd64
 ./Ghost-Linux-amd64
 ```
 
-With a graphical desktop, Ghost opens the system browser. The executable is built with `CGO_ENABLED=0` and does not require Java, Node, or Go. A [Linux ZIP](https://github.com/Cryosimorgh/Ghost/releases/download/v1.1.1/Ghost-Linux-v1.1.1.zip) with a launcher is also available.
+Both are single Go executables with the UI embedded. **No Java, Node, npm, Go installation, or hosted signaling account is required.** They use an existing browser to display the UI. Ghost's browser interface is local to your device at `http://127.0.0.1:8787`; network peers use a **separate** listener on TCP `8788`.
 
-For a headless server:
+### Find another Ghost on your LAN
 
-```bash
-./Ghost-Linux-amd64 -open=false -listen 0.0.0.0:8787
-```
+1. Both computers launch Ghost. Use the same LAN, with multicast UDP **47383** and peer TCP **8788** allowed through their firewalls.
+2. Open **People → Nearby nodes**. Discovered instances appear automatically through multicast announcements; no central directory or public server is queried.
+3. Click **+ name** to request friendship, or manually enter the friend's Mail ID. The other user accepts the request from **Inbox**.
+4. Online friends expose their live Call IDs. Click **Connect**, then use voice, chat, or receiver-triggered file downloads.
 
-**Remote access needs HTTPS** to use microphones in typical browsers. See [Host a shared hub](#host-a-shared-hub) before exposing a server to the internet.
+If multicast is blocked, copy **your node address** from the Nearby nodes panel and have your friend paste it into **Direct peer address**. Use `http://192.168.x.y:8788` or the actual address shown. A successful connection exchanges each node's public key and online user information and is saved for reconnection.
 
-### Android (experimental)
+### Connect across the internet
 
-The [v1.1.0 Android preview APK](https://github.com/Cryosimorgh/Ghost/releases/download/v1.1.0/Ghost-Android-v1.1.0-preview.apk) is a **WebView client** for Android 10+; it does not run a Go hub on the phone.
+There is deliberately **no Ghost-run server, account directory, or TURN relay**. To find each other across networks, exchange a reachable address **out of band** and enter it under **Direct peer address**. Nodes pin the peer's public key when first reached. The receiving node must have a port forwarded or a public address; only **one node must accept inbound peer signaling**. The other can maintain a signed, outbound polling connection and receive friend requests, acceptances, and call signals through it. With both nodes behind restrictive NATs or CGNAT, the initial connection may still be impossible without a reachable third peer or infrastructure. WebRTC media traversal is a separate concern.
 
-1. Set up a reachable Ghost hub with a valid HTTPS certificate.
-2. Install and open the APK, then enter the hub's `https://` address.
-3. Grant microphone access when prompted to test your mic or start voice.
-
-The Android client includes a system file picker and a native Downloads integration. Audio device choices depend on Android version and WebView support. It is a **debug-signed preview**, not a production-distributed or fully validated mobile app; its signature may differ between builds, requiring uninstall/reinstall. No background calling or push notifications.
-
-## Connect to a friend
-
-1. Open Ghost and create a name. Your **Mail ID** stays associated with your account; your **Call ID** changes between live sessions.
-2. Back up your **identity key** using **BACKUP KEY**. Possession of this key grants access to your Ghost identity.
-3. Add a friend's Mail ID under **People**. They accept your request in **Inbox**.
-4. When they are online **on the same hub**, select them and choose **Connect** (or dial their live Call ID). The other person accepts.
-5. Send messages, offer files with **+**, or select **Start voice**.
-
-**Important:** Running Ghost on two computers independently starts **two different hubs**. They cannot discover each other's Mail IDs by default. To communicate across devices or over the internet, both must open the **same shared Ghost hub URL**.
-
-## Audio controls
-
-Open **Audio** to choose a microphone, select a playback device if the browser supports it, and click **Test mic** to see a local spectrum without transmitting audio.
-
-- **Gain** is an unrestricted numeric **dB** entry (`0 dB` = unity, `+6 dB` ≈ 2× amplitude). There is no artificial UI cap; extreme values may clip, be rejected by the audio engine, or damage hearing at high playback levels. **dBi** is for antenna gain, not microphones.
-- **SNR noise gate** ranges from 0 to 24 dB. It controls when quiet input is attenuated; it **does not improve the physical microphone SNR**.
-- **Audio output selection** uses browser `setSinkId` where available. Otherwise select output in the operating system. Android may route audio through its native controls.
-
-## How files work
-
-1. **Offer:** the sender advertises the filename, MIME type, and size only.
-2. **Request:** the receiver clicks **Download**.
-3. **Transfer:** only then does the sender stream the file bytes over a separate WebRTC data channel.
-
-The signaling hub does **not** receive file contents. Transfers require both peers online with an active connection; interruptions may require re-offering the file. Chrome/Edge can stream larger downloads directly to disk when the File System Access API is available. Browser fallback downloads are limited to **100 MB** to avoid excessive memory use. Android can save received files under Downloads/Ghost.
-
-## Host a shared hub
-
-Ghost's Go process handles **identity, friend requests, presence, and WebRTC signaling**, not hosted voice/chat/file storage. You need one shared instance for friends on different machines.
-
-Example with a valid TLS certificate for your hostname:
+For a reachable host with a TLS certificate, run e.g.:
 
 ```bash
-./Ghost-Linux-amd64 -listen 0.0.0.0:8787 -open=false \
-  -tls-cert server.crt -tls-key server.key
+./Ghost-Linux-amd64 -peer-listen 0.0.0.0:8788 \
+  -peer-advertise https://ghost.example.com:8788 \
+  -peer-tls-cert server.crt -peer-tls-key server.key
 ```
 
-Then both users visit `https://your-domain:8787/`. Alternatively terminate HTTPS at a reverse proxy configured to forward signaling events without buffering. Protect the server's `ghost-data.json` file and identity credentials.
+The peer port is **8788**, not the local browser port **8787**. Expose only the peer port, keep the browser hub on loopback, and use TLS for internet-facing mesh traffic. A valid certificate is required for HTTPS; otherwise the peer protocol uses plain HTTP and its signaling/identity metadata is visible to network intermediaries (WebRTC message/media content is separately encrypted).
 
-Ghost uses public **STUN** servers by default and no TURN relay. Some NAT/firewall combinations block direct WebRTC connectivity. Optional `-turn-url`, `-turn-user`, and `-turn-pass` flags support relay fallback, meaning encrypted traffic can travel **through a relay** rather than on a direct network path.
+To opt into external STUN services for NAT traversal, pass `-stun stun:your-stun-server:3478`. **No public STUN server is configured by default**. Optional `-turn-url`, `-turn-user`, and `-turn-pass` are supported but necessarily introduce a relay; that is not strictly direct P2P.
 
-```bash
-./Ghost-Linux-amd64 -help
+## Architecture
+
+```text
+Ghost A desktop                          Ghost B desktop
++------------------------+               +------------------------+
+| Browser UI (localhost) |               | Browser UI (localhost) |
+| Go node + mailbox      | <-signed P2P->| Go node + mailbox      |
+| UDP LAN announcement   |     TCP       | UDP LAN announcement   |
++------------------------+               +------------------------+
+           \_______________________________/
+              WebRTC audio / chat / files
+              (only after user acceptance)
 ```
 
-## Data and security
+- **Discovery:** UDP multicast on the LAN; saved node addresses or manually entered direct URLs for other networks. There is no DHT/global directory in this release.
+- **Signaling:** direct node-to-node HTTP(S) requests, signed with persistent Ed25519 **node keys**, with freshness checks and replay prevention. A peer's node key is retained across restarts in `ghost-data.json.nodekey` (private, do not share it).
+- **Friends:** each node owns its local identities/inbox and stores a pinned remote-node key for a remote contact. Friend requests and acceptances travel directly between online nodes, not through SMTP or a common hub.
+- **Calling:** each browser session gets a temporary Call ID. Ghost finds that ID on a known live peer node and sends WebRTC offers, answers, and ICE candidates directly. Browser-to-browser voice/messages/files use WebRTC rather than the peer signaling connection.
+- **Storage:** account metadata and known peer URLs live in local `ghost-data.json`; chat history is saved in that browser's IndexedDB. No automatic history sync or offline message delivery.
 
-- The server stores account metadata, token hashes, and friend relationships in `ghost-data.json` (or the path supplied by `-data`).
-- Chat history is stored **locally in the current browser's IndexedDB**. It does not automatically sync between desktop browsers and Android devices.
-- Voice and chat/file connections use WebRTC encryption. The hub still sees identity, presence, and signaling metadata.
-- Message and file contents are **not** uploaded to the hub. Offline messages are not queued for delivery.
-- Export and safeguard your identity key before clearing browser data.
-- Ghost is a **personal-use prototype**, not an independently audited secure messenger.
+### File transfer is receiver-initiated
 
-## Build from source
+The sender advertises only file metadata. **The sender reads/transmits file bytes only after the recipient clicks Download.** A separate WebRTC data channel carries file chunks, not the Go signaling mesh. In compatible Chrome/Edge versions, direct-to-disk streaming supports larger files; fallback is limited to 100 MB. Android preview has native Downloads integration. Interruptions may require a fresh file offer.
 
-Requires **Go 1.23+** for the desktop app; no third-party Go modules or Node runtime are required to build/run the Go server:
+## Controls
+
+Under **Audio**: select microphone and (when supported) playback device; preview the mic's frequency spectrum; set unrestricted numeric **gain in dB** (`0` dB = unity), and an SNR **noise-gate threshold** from 0–24 dB. A noise gate does *not* increase the physical microphone SNR. Extreme amplification can clip or damage hearing. dBi measures antenna gain, not microphones.
+
+The UI has desktop and mobile-responsive layouts, reduced-motion support, and a small animated ghost with eye tracking and idle behavior. Windows uses a tray icon; Linux opens the default browser on graphical desktops.
+
+## Security and limitations
+
+- P2P **node identity** is Ed25519-signed. The first encounter with a node is **trust-on-first-use**, not an independently authenticated identity; verify the node's key out of band if identity spoofing matters. User Mail IDs are still locally generated and **not cryptographically derived from a per-user public key**.
+- The LAN hello endpoint advertises active local Mail IDs, names, and Call IDs to reachable nodes. Disable discovery (`-lan=false`) or restrict access with a firewall when that is undesirable.
+- Without TLS, node-to-node signaling metadata is visible on the network. WebRTC media/data channels use DTLS/SRTP encryption. Remote addresses may reveal IP locations. Signed polling responses support a private node behind NAT when one side has a reachable peer port.
+- Browser ICE may fail even when node-to-node signaling succeeds. No default STUN, TURN, NAT punch-through service, or global DHT is provided.
+- No offline mail, background call wakeup, push notification, or multi-device browser history sync. Android v1.1.0 is **not** an independent Ghost P2P node and cannot participate in the new automatic LAN discovery on its own.
+- Ghost is an **experimental personal-use messenger**, not an audited end-to-end identity or anonymity system.
+
+## CLI options
+
+```text
+-listen          Local browser UI address (default 127.0.0.1:8787)
+-peer-listen     LAN/internet peer signaling listener (default 0.0.0.0:8788)
+-peer-advertise  Public reachable URL for your peer listener (optional)
+-peers           Enable direct peer mesh (default true)
+-lan             Enable automatic LAN multicast discovery (default true)
+-stun            Optional comma-separated STUN URLs (empty by default)
+-turn-url        Optional TURN relay URL(s)
+-data            Local identity/friend/peer-address database
+-peer-tls-cert/key  TLS certificate/key for peer listener only
+-tls-cert/key    Optional TLS certificate/key for browser UI only
+-open            Open web browser (default true on desktop)
+-tray            Windows system tray control
+```
+
+## Build and tests
+
+Go 1.23+ is required to **build from source**, not to run a release binary:
 
 ```bash
 go test ./...
-go build -o ghost .
-./ghost
+go test -race ./...
+go vet ./...
+GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o Ghost-Linux-amd64 .
+GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -ldflags='-H=windowsgui' -o Ghost-Windows-amd64.exe .
 ```
 
-The frontend is embedded with Go's `embed` package. The [GitHub Actions workflow](https://github.com/Cryosimorgh/Ghost/blob/main/.github/workflows/release.yml) cross-compiles native Windows/Linux releases, adds Windows icon resources, and separately compiles the Android debug APK with **JDK 17, Android SDK, and Gradle**. Node is used in CI only to syntax-check the browser script.
+`mesh_test.go` runs **two independent Go nodes with separate identity databases** and verifies mutual peer discovery by URL, cross-node friend requests/acceptance, online Call IDs, signaling in both directions, signed-message replay prevention, and node-key persistence. Optional real multicast test: `GHOST_TEST_LAN=1 go test -run TestLANMulticastDiscovery -v` (requires working multicast interface). Live WebRTC browser tests remain unverified in the existing sandbox.
 
-To build Android locally:
-
-```bash
-gradle -p android :app:assembleDebug
-```
-
-The Android output is `android/app/build/outputs/apk/debug/app-debug.apk`.
-
-## Testing and limitations
-
-- Automated Go tests cover registration, authentication, friend requests, presence, persistence, signaling, and access checks. Windows/Linux and Android build jobs have passed in GitHub Actions.
-- JavaScript syntax checking passes. A two-browser WebRTC smoke test is included at `tests/browser-smoke.mjs`, but **live end-to-end voice, chat, and file transfer remain unverified in CI** due to Chromium localhost restrictions.
-- Browser microphone and output-device APIs vary; HTTPS is generally required for microphone access on a remote host.
-- No background Android calls, push notifications, offline chat delivery, or cross-device history synchronization.
-
-[**Releases**](https://github.com/Cryosimorgh/Ghost/releases) · [**Issues**](https://github.com/Cryosimorgh/Ghost/issues) · [**Source**](https://github.com/Cryosimorgh/Ghost)
+[Source](https://github.com/Cryosimorgh/Ghost) · [Releases](https://github.com/Cryosimorgh/Ghost/releases) · [Bug reports](https://github.com/Cryosimorgh/Ghost/issues)

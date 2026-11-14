@@ -26,11 +26,21 @@
       <div class="side-scroll">
         <section class="identity card-dark">
           <div class="eyebrow">YOUR IDENTITY <span class="dot" id="presenceDot"></span></div>
-          <div class="profile"><div class="avatar" id="selfAvatar">Q</div><div class="profile-copy"><strong id="selfName">—</strong><span id="selfStatus">Connecting to hub</span></div></div>
+          <div class="profile"><div class="avatar" id="selfAvatar">Q</div><div class="profile-copy"><strong id="selfName">—</strong><span id="selfStatus">Starting local node</span></div></div>
           <div class="id-label">MAIL ID <span>persistent</span></div>
           <div class="copyline"><code id="mailId">—</code><button class="icon-button" id="copyMail" title="Copy Mail ID" aria-label="Copy Mail ID">COPY</button></div>
           <div class="id-label with-gap">LIVE CALL ID <span>changes each session</span></div>
           <div class="copyline"><code id="callId">OFFLINE</code><button class="icon-button" id="copyCall" title="Copy live Call ID" aria-label="Copy live Call ID">COPY</button></div>
+        </section>
+        <section class="mesh-panel" aria-label="Peer discovery">
+          <div class="mesh-head"><span>NEARBY NODES</span><span id="meshCount" class="count">0</span></div>
+          <div class="mesh-self"><code id="meshSelf">Finding local address…</code><button type="button" id="copyMeshSelf" title="Copy address to share with a LAN friend">COPY</button></div>
+          <div id="meshPeers" class="mesh-list"><div class="mesh-empty">Searching your network…</div></div>
+          <form id="meshConnectForm" class="mesh-connect">
+            <label for="meshAddress">DIRECT PEER ADDRESS</label>
+            <div class="inline-form"><input id="meshAddress" type="text" placeholder="192.168.1.42:8788" autocomplete="off" spellcheck="false" required aria-label="Peer IP or HTTPS address"><button type="submit" title="Add direct peer">↗</button></div>
+          </form>
+          <p class="mesh-note">No directory server. LAN nodes appear automatically; remote nodes need a reachable address.</p>
         </section>
         <div class="section-title"><span>PEOPLE</span><span class="count" id="friendCount">0</span></div>
         <div id="friends" class="contact-list"><div class="empty-small">Your contacts will appear here.</div></div>
@@ -49,7 +59,7 @@
       <div class="toolbar"><div class="dial-wrap"><span class="toolbar-label">DIAL</span><input id="dialInput" maxlength="9" placeholder="Enter live Call ID" autocomplete="off" spellcheck="false"></div><button class="button primary" id="connectBtn">Connect</button><button class="button subtle" id="voiceBtn" disabled>Start voice</button><button class="button ghost" id="hangupBtn" disabled>Disconnect</button></div>
       <div class="notice hidden" id="incomingCall"><div class="notice-copy"><strong id="incomingName">Incoming connection</strong><span id="incomingText">Someone wants to connect to you.</span></div><button class="button primary" id="acceptCall">Accept</button><button class="button ghost" id="declineCall">Decline</button></div>
       <div class="chat-history" id="history" role="log" aria-live="polite">
-        <div class="empty-state"><div class="wave-symbol"><span></span><span></span><span></span><span></span><span></span></div><h1>No noise. Just connection.</h1><p>Choose a friend or enter a live Call ID to open an encrypted peer-to-peer channel.</p><div class="empty-metadata"><span><b>01</b> DIRECT VOICE</span><span><b>02</b> MESSAGES</span><span><b>03</b> ON-DEMAND FILES</span></div></div>
+        <div class="empty-state"><div class="wave-symbol"><span></span><span></span><span></span><span></span><span></span></div><h1>Quiet until connected.</h1><p>Choose a friend or enter a live Call ID to open an encrypted peer-to-peer channel.</p><div class="empty-metadata"><span><b>01</b> DIRECT VOICE</span><span><b>02</b> MESSAGES</span><span><b>03</b> ON-DEMAND FILES</span></div></div>
       </div>
       <form class="composer" id="composer"><button type="button" id="attachBtn" class="attach" aria-label="Attach a file" title="Offer a file" disabled>+</button><input id="fileInput" type="file" hidden><input id="messageInput" placeholder="Connect to a peer to send a message..." autocomplete="off" maxlength="12000" disabled><button class="send" id="sendBtn" type="submit" disabled>Send <span aria-hidden="true">↗</span></button></form>
       <div class="composer-note"><span>WebRTC encrypted transport</span><span>Files transfer only when the receiver selects Download</span></div>
@@ -69,8 +79,8 @@
         <div class="spectrum-box"><canvas id="micSpectrum" role="img" aria-label="Live microphone frequency spectrum" width="520" height="180"></canvas><div class="spectrum-labels"><span>80 Hz</span><span id="spectrumStatus">Waiting for input</span><span>8 kHz</span></div></div>
         <div class="meter"><div id="levelFill"></div></div>
       </section>
-      <section class="inspector-section connection-inspector"><div class="inspector-heading">Transport</div><div class="stat-line"><span>Signaling hub</span><b id="hubState">Offline</b></div><div class="stat-line"><span>ICE state</span><b id="iceState">—</b></div><div class="stat-line"><span>Data channel</span><b id="dataState">Closed</b></div><div class="stat-line"><span>Voice</span><b id="voiceState">Muted</b></div><div class="stat-line"><span>Media path</span><b>Peer ↔ Peer</b></div></section>
-      <div class="inspector-bottom"><div class="bottom-index">GHOST — 002</div><p>The hub finds people and passes connection signals. Your conversations and file contents are not stored there.</p></div>
+      <section class="inspector-section connection-inspector"><div class="inspector-heading">Transport</div><div class="stat-line"><span>Your local node</span><b id="hubState">Offline</b></div><div class="stat-line"><span>ICE state</span><b id="iceState">—</b></div><div class="stat-line"><span>Data channel</span><b id="dataState">Closed</b></div><div class="stat-line"><span>Voice</span><b id="voiceState">Muted</b></div><div class="stat-line"><span>Media path</span><b>Peer ↔ Peer</b></div></section>
+      <div class="inspector-bottom"><div class="bottom-index">GHOST — 002</div><p>Each app discovers and signals directly with other Ghost nodes. No Ghost directory or messaging server.</p></div>
     </aside>
   </div>
   <nav class="mobile-nav" aria-label="App navigation"><button type="button" data-view="people">People</button><button type="button" data-view="chat" class="active">Chat</button><button type="button" data-view="audio">Audio</button></nav>

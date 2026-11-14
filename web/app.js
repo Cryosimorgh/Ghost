@@ -797,6 +797,55 @@ function backupIdentity() {
   anchor.click(); setTimeout(() => URL.revokeObjectURL(url), 5000);
   toast('Keep this access key private. Anyone holding it can use your identity.');
 }
+// The peer directory lives on the local Go node, not on a hosted Ghost hub.
+let meshRefreshRunning = false;
+async function refreshMesh() {
+  if (!identity || meshRefreshRunning) return;
+  meshRefreshRunning = true;
+  try {
+    const state = await api('/api/peers');
+    const items = state.peers || [];
+    $('meshCount').textContent = String(items.filter(p=>p.online).length);
+    $('meshSelf').textContent = (state.addresses || []).find(a => !a.includes('127.0.0.1')) || state.address || 'Unknown address';
+    const target = $('meshPeers'); target.replaceChildren();
+    if (!items.length) { target.append(node('div', 'mesh-empty', 'Searching LAN · or enter a peer address')); return; }
+    for (const p of items) {
+      const group = node('div', 'mesh-peer');
+      const title = node('div', 'mesh-peer-top');
+      const name = node('strong', '', p.url.replace(/^https?:\/\//, ''));
+      const status = node('span', 'node-state', p.online ? 'ONLINE' : 'OFFLINE');
+      title.append(name, status); group.append(title);
+      if (p.online && p.users?.length) {
+        const users = node('div', 'mesh-peer-users');
+        for (const user of p.users) {
+          const button = node('button', '', `+ ${user.name}`); button.type = 'button';
+          button.title = `${user.id} · invite to contacts`;
+          button.disabled = user.id === identity.id || (friendState.friends || []).some(f=>f.id === user.id);
+          button.addEventListener('click', async () => {
+            button.disabled = true;
+            try { await api('/api/friend/request', { method: 'POST', body: { id: user.id } }); await refreshFriends(); toast(`Invitation sent to ${user.name}`); }
+            catch (err) { toast(err.message, true); button.disabled = false; }
+          });
+          users.append(button);
+        }
+        group.append(users);
+      }
+      target.append(group);
+    }
+  } catch (e) { $('meshPeers').replaceChildren(node('div','mesh-empty', 'Peer discovery unavailable')); }
+  finally { meshRefreshRunning = false; }
+}
+async function wirePeerDiscovery() {
+  $('copyMeshSelf').addEventListener('click', () => copy($('meshSelf').textContent));
+  $('meshConnectForm').addEventListener('submit', async e => {
+    e.preventDefault(); const input = $('meshAddress'); const address = input.value.trim(); if (!address) return;
+    try { await api('/api/peers/connect',{ method:'POST',body:{address} }); input.value=''; await refreshMesh(); await refreshFriends(); toast('Peer found. You can add their Mail ID.'); }
+    catch (err) { toast(`Cannot reach peer: ${err.message}`, true); }
+  });
+  await refreshMesh();
+  setInterval(refreshMesh, 6500);
+}
+
 async function wireEvents() {
   $('copyMail').addEventListener('click', () => copy(identity?.id));
   $('copyCall').addEventListener('click', () => copy(callId));
@@ -874,6 +923,6 @@ async function main() {
   catch (e) { toast(`History storage unavailable: ${e.message}`, true); }
   try { const cfg = await api('/api/config'); iceServers = cfg.iceServers || []; }
   catch (e) { toast(`Hub is unavailable: ${e.message}`, true); }
-  await initAccount(); updateState();
+  await initAccount(); await wirePeerDiscovery(); updateState();
 }
 main().catch(err => { console.error(err); toast(err.message, true); });

@@ -166,3 +166,28 @@ body{font-size:13px}
   .message{max-width:96%}
 }
 @media(prefers-reduced-motion:reduce){.ghost-art,.ghost-dart .ghost-art,.ghost-peek .ghost-art{animation:none!important}.message{animation:none}*,*::before,*::after{transition-duration:.01ms!important;scroll-behavior:auto!important}}
+
+/* Discovery has one compact action and a quiet list; no dashboard chrome. */
+.mesh-panel{margin:15px 5px 16px;padding:14px 12px 12px;border:1px solid #2e4542;border-radius:11px;background:#172123}
+.mesh-head{display:flex;align-items:center;justify-content:space-between;font-size:10px;font-weight:620;letter-spacing:1px;color:#b4c9c1}
+.mesh-list{margin:12px 0 8px;max-height:196px;overflow-y:auto;scrollbar-color:#354a43 transparent}
+.mesh-empty,.mesh-note{font-size:10px;color:#849c94;line-height:1.6}
+.mesh-note{margin:11px 0 0}
+.mesh-peer{padding:8px 0 9px;border-top:1px solid #2b3e3c}
+.mesh-peer:first-child{border-top:0}
+.mesh-peer-top{display:flex;align-items:center;gap:8px;color:#d4e6dd;font-size:11px}
+.mesh-peer-top strong{min-width:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;font-weight:530}
+.mesh-peer-top .node-state{margin-left:auto;white-space:nowrap;color:#80b6a5;font-size:9px}
+.mesh-peer-users{display:flex;flex-wrap:wrap;gap:5px;margin-top:7px}
+.mesh-peer-users button{background:#263b35;color:#c2dfd3;border:1px solid #3d5d50;border-radius:7px;padding:6px 8px;font-size:10px;cursor:pointer}
+.mesh-peer-users button:hover{background:#385247}
+.mesh-peer-users button:disabled{opacity:.5;cursor:default}
+.mesh-connect{margin-top:11px}
+.mesh-connect label{display:block;margin-bottom:8px;color:#a5bdb3;font-size:9px;font-weight:580;letter-spacing:.65px}
+.mesh-connect .inline-form{margin:0}
+.mesh-connect .inline-form input{min-width:0;font-size:11px}
+.mesh-connect .inline-form button{font-size:16px}
+
+.mesh-self{display:flex;align-items:center;gap:7px;margin-top:12px;padding:8px 9px;background:#101b1c;border:1px solid #283e39;border-radius:7px}
+.mesh-self code{min-width:0;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:10px ui-monospace,Consolas,monospace;color:#a5c5ba}
+.mesh-self button{border:0;background:none;color:#9fcbb9;font-size:9px;letter-spacing:.3px;cursor:pointer}

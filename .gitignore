@@ -9,3 +9,6 @@ Ghost-linux-amd64
 *.zip
 .DS_Store
 .ghost-seed.tar.xz
+
+# Private node signing key (NEVER commit)
+*.nodekey

@@ -28,10 +28,10 @@ jobs:
       - name: Render icons and compile Windows executable resource
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq binutils-mingw-w64-x86-64
+          sudo apt-get install -y -qq binutils-mingw-w64-x86-64 gcc-mingw-w64-x86-64-posix
           python3 -m pip install --user --quiet pillow cairosvg
           python3 scripts/build_icons.py
-          x86_64-w64-mingw32-windres --preprocessor="gcc -E -xc-header -DRC_INVOKED" -i assets/ghost.rc -o rsrc_windows_amd64.syso
+          x86_64-w64-mingw32-windres -i assets/ghost.rc -o rsrc_windows_amd64.syso
       - name: Build portable desktop binaries
         shell: bash
         run: |

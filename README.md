@@ -1,121 +1,143 @@
 # Ghost
 
-Small, self-hosted Go + browser WebRTC application for **direct voice, chat, and on-demand file transfer**. No Node runtime, npm packages, external database, SMTP server, or cloud account is needed.
+**Peer-to-peer voice, chat, and file sharing.** Ghost is a small Go-hosted WebRTC messenger with a quiet dark interface, an animated ghost mascot, a friend-request inbox, and local message history.
 
-## Standalone desktop executables (v1.1.1)
+[**Download for Windows**](https://github.com/Cryosimorgh/Ghost/releases/download/v1.1.1/Ghost-Windows-amd64.exe) · [**Download for Linux**](https://github.com/Cryosimorgh/Ghost/releases/download/v1.1.1/Ghost-Linux-amd64) · [**Android preview**](https://github.com/Cryosimorgh/Ghost/releases/download/v1.1.0/Ghost-Android-v1.1.0-preview.apk) · [**All releases**](https://github.com/Cryosimorgh/Ghost/releases)
 
-Windows and Linux have **native, portable Go binaries with the entire web interface embedded**. No Java, JavaScript server runtime, Node.js, npm, Go installation, or setup wizard is required. A normal browser installed on the desktop displays the interface; Ghost starts its own local hub. You do not need a web server or database service.
+> **Current desktop release: v1.1.1.** Windows and Linux downloads are self-contained native executables: **no Java, Node.js, npm, or Go installation** is needed. They host the UI locally in your **existing web browser**. The Android build is an experimental client, not a standalone hub.
 
-- **Windows:** Download `Ghost-Windows-amd64.exe` and double-click it. The app runs in the system tray and opens the UI in your default browser. Alternatively use the Windows ZIP (which contains the headless/console build).
-- **Linux x86-64:** Download `Ghost-Linux-amd64`, run `chmod +x Ghost-Linux-amd64` once, then `./Ghost-Linux-amd64`. Under a graphical desktop, the UI opens in your default browser. The Linux ZIP also includes an executable `Start Ghost.sh` launcher. Use `./Ghost-Linux-amd64 -open=false` on headless servers.
+## What it does
 
-No external file is required beside either executable. User account metadata is written to `ghost-data.json` in the working directory; browser-local chat history remains on that device. Online contacts still require a *shared* hub reachable by both users; distributing a standalone executable does not eliminate that discovery requirement.
+| | |
+| --- | --- |
+| **Voice** | Direct WebRTC audio with microphone selection, selectable output where supported, unrestricted numeric gain in **dB**, and an adjustable 0–24 dB SNR noise gate |
+| **Mic preview** | Local microphone test, live frequency spectrum, and input level display |
+| **Messaging** | WebRTC data-channel messages with per-device history in browser IndexedDB |
+| **Files** | Offer a file by metadata; its bytes remain with the sender **until the recipient chooses Download** |
+| **Contacts** | Persistent Mail ID, friend requests and inbox, online presence, and session-specific Call IDs |
+| **Interface** | Responsive People / Chat / Audio views, animated ghost with pointer-tracking eyes, and reduced-motion support |
+| **Desktop** | Single native Go executable with embedded frontend, Windows tray controls, and Linux desktop browser launching |
 
-**Runtime verification:** Linux is compiled with `CGO_ENABLED=0` and is a statically linked ELF; Windows with `CGO_ENABLED=0` and a Win32 tray icon resource. Java is only used in CI to compile the separate Android APK. Node is only a CI syntax-check tool, not a desktop runtime.
+The built-in inbox manages friend requests; it is **not SMTP or an offline message-delivery system**.
 
-## Start on Windows
+## Install and run
 
-1. Unzip the Windows release and launch **Ghost.exe** (or `Start Ghost.cmd`). Ghost runs in the notification area (system tray) without a console window. Right-click its icon for **Open Ghost** / **Exit Ghost**. Use **Ghost-console.exe** for verbose logs and headless hosting (`-tray=false -open=false`).
-2. The Go hub starts at `http://127.0.0.1:8787` and automatically opens your browser.
-3. Choose a display name to create your persistent **Mail ID**. Back up your **identity key** using the button on the left.
-4. To add a contact, enter their **Mail ID** under **Add by Mail ID**. They accept your request in **Inbox**. When the contact is online, the friend list shows their **live Call ID**.
-5. Select the contact, click **Connect**, and have them accept. Once the direct data channel opens, you can chat, send file offers, or start your mic.
+### Windows (x64)
 
-**Important: both people must use the same hub.** Running the app separately on two PCs creates *two independent hubs*, so those IDs cannot see each other. To connect over the internet, host one shared Ghost server using a reachable URL and HTTPS (see below).
+1. Download [**Ghost-Windows-amd64.exe**](https://github.com/Cryosimorgh/Ghost/releases/download/v1.1.1/Ghost-Windows-amd64.exe).
+2. Run it. Ghost starts the local hub at `http://127.0.0.1:8787` and opens your browser.
+3. Find Ghost in the notification area (system tray) for **Open** and **Exit**.
 
-## Gain and SNR
+No installer or additional runtime is necessary. The [Windows ZIP](https://github.com/Cryosimorgh/Ghost/releases/download/v1.1.1/Ghost-Windows-v1.1.1.zip) also contains a console executable for troubleshooting or server operation.
 
-- **Microphone gain** is an uncapped *numeric dB* setting, not a percentage. `0 dB` means unity; `+6 dB` roughly doubles amplitude, and `-6 dB` roughly halves it. Use the unrestricted number field or ±3 dB buttons. dBi measures antenna gain, **not microphone amplification**.
-- An extreme entry can exceed the browser audio engine's numerical capabilities; those values are rejected instead of silently limited. Large boosts can clip audio and cause loud playback.
-- **SNR noise gate** sets the adaptive signal-to-noise *opening threshold* from 0 to 24 dB. It attenuates quiet input, but cannot physically improve a microphone's SNR. This is not a recording-quality/SNR enhancement engine.
+### Linux (x86-64)
 
-## Files: receiver must request the bytes
+Download [**Ghost-Linux-amd64**](https://github.com/Cryosimorgh/Ghost/releases/download/v1.1.1/Ghost-Linux-amd64), then:
 
-Click `+` to **offer** a local file. Only name, type, and size are announced through the encrypted data channel. The sender does **not** read or transmit the file contents yet. The receiver must choose **Download** (and, when available, a save destination). Only then does the sender open a separate WebRTC data channel and stream chunks. The hub never receives the file contents.
-
-For large files, Chrome/Edge can save directly to disk via the File System Access API. Browsers without that API support the fallback (maximum 100 MB to avoid keeping huge downloads in RAM). Offered files are tied to the active browser session and must be offered again after disconnect or refresh. Connection interruption can require a fresh offer.
-
-## Built-in inbox, not SMTP
-
-The server maintains Mail IDs, friend requests, and an inbox for accepting/declining them, plus live online presence and Call ID routing. This is simpler and more reliable for a self-hosted application than SMTP, which needs external addresses, credentials, and a mail provider. **Offline chat messages are not sent by mail**: chat and file transfers require both users to establish a WebRTC connection. Chat history is stored in each browser's **IndexedDB**, not the server, so another browser/device will not automatically inherit it.
-
-## Hosting one hub for remote friends
-
-A shared hub provides **identity, friend requests, presence, and WebRTC signaling only**. It is not a media server. On Windows, for example:
-
-```powershell
-.\Ghost-console.exe -listen 0.0.0.0:8787 -tls-cert server.crt -tls-key server.key -open=false -tray=false
+```bash
+chmod +x Ghost-Linux-amd64
+./Ghost-Linux-amd64
 ```
 
-Use a certificate valid for your public DNS name, and connect both browsers to `https://your-domain:8787/`. You can alternatively terminate HTTPS at a properly configured reverse proxy; forward the signaling SSE stream without response buffering. Keep the hub data file private; it contains identity-token hashes and the friend graph (not chat contents).
+With a graphical desktop, Ghost opens the system browser. The executable is built with `CGO_ENABLED=0` and does not require Java, Node, or Go. A [Linux ZIP](https://github.com/Cryosimorgh/Ghost/releases/download/v1.1.1/Ghost-Linux-v1.1.1.zip) with a launcher is also available.
 
-Default ICE configuration includes public **STUN servers** for direct connections, with **no TURN relay** enabled. Some NATs/firewalls cannot establish a direct WebRTC path. The optional TURN flags support relay fallback but then encrypted packets travel through the relay rather than directly between endpoints:
+For a headless server:
 
-```powershell
-.\Ghost-console.exe -help
+```bash
+./Ghost-Linux-amd64 -open=false -listen 0.0.0.0:8787
 ```
 
-The hub stores no voice, chat history, or file bytes. WebRTC encrypts active peer connections (DTLS/SRTP); the hub still sees user IDs, online status, and signaling metadata. Protect the exported identity key as a password: anyone holding it can assume that identity. This is a practical personal-use prototype, **not an audited secure messenger**.
+**Remote access needs HTTPS** to use microphones in typical browsers. See [Host a shared hub](#host-a-shared-hub) before exposing a server to the internet.
+
+### Android (experimental)
+
+The [v1.1.0 Android preview APK](https://github.com/Cryosimorgh/Ghost/releases/download/v1.1.0/Ghost-Android-v1.1.0-preview.apk) is a **WebView client** for Android 10+; it does not run a Go hub on the phone.
+
+1. Set up a reachable Ghost hub with a valid HTTPS certificate.
+2. Install and open the APK, then enter the hub's `https://` address.
+3. Grant microphone access when prompted to test your mic or start voice.
+
+The Android client includes a system file picker and a native Downloads integration. Audio device choices depend on Android version and WebView support. It is a **debug-signed preview**, not a production-distributed or fully validated mobile app; its signature may differ between builds, requiring uninstall/reinstall. No background calling or push notifications.
+
+## Connect to a friend
+
+1. Open Ghost and create a name. Your **Mail ID** stays associated with your account; your **Call ID** changes between live sessions.
+2. Back up your **identity key** using **BACKUP KEY**. Possession of this key grants access to your Ghost identity.
+3. Add a friend's Mail ID under **People**. They accept your request in **Inbox**.
+4. When they are online **on the same hub**, select them and choose **Connect** (or dial their live Call ID). The other person accepts.
+5. Send messages, offer files with **+**, or select **Start voice**.
+
+**Important:** Running Ghost on two computers independently starts **two different hubs**. They cannot discover each other's Mail IDs by default. To communicate across devices or over the internet, both must open the **same shared Ghost hub URL**.
+
+## Audio controls
+
+Open **Audio** to choose a microphone, select a playback device if the browser supports it, and click **Test mic** to see a local spectrum without transmitting audio.
+
+- **Gain** is an unrestricted numeric **dB** entry (`0 dB` = unity, `+6 dB` ≈ 2× amplitude). There is no artificial UI cap; extreme values may clip, be rejected by the audio engine, or damage hearing at high playback levels. **dBi** is for antenna gain, not microphones.
+- **SNR noise gate** ranges from 0 to 24 dB. It controls when quiet input is attenuated; it **does not improve the physical microphone SNR**.
+- **Audio output selection** uses browser `setSinkId` where available. Otherwise select output in the operating system. Android may route audio through its native controls.
+
+## How files work
+
+1. **Offer:** the sender advertises the filename, MIME type, and size only.
+2. **Request:** the receiver clicks **Download**.
+3. **Transfer:** only then does the sender stream the file bytes over a separate WebRTC data channel.
+
+The signaling hub does **not** receive file contents. Transfers require both peers online with an active connection; interruptions may require re-offering the file. Chrome/Edge can stream larger downloads directly to disk when the File System Access API is available. Browser fallback downloads are limited to **100 MB** to avoid excessive memory use. Android can save received files under Downloads/Ghost.
+
+## Host a shared hub
+
+Ghost's Go process handles **identity, friend requests, presence, and WebRTC signaling**, not hosted voice/chat/file storage. You need one shared instance for friends on different machines.
+
+Example with a valid TLS certificate for your hostname:
+
+```bash
+./Ghost-Linux-amd64 -listen 0.0.0.0:8787 -open=false \
+  -tls-cert server.crt -tls-key server.key
+```
+
+Then both users visit `https://your-domain:8787/`. Alternatively terminate HTTPS at a reverse proxy configured to forward signaling events without buffering. Protect the server's `ghost-data.json` file and identity credentials.
+
+Ghost uses public **STUN** servers by default and no TURN relay. Some NAT/firewall combinations block direct WebRTC connectivity. Optional `-turn-url`, `-turn-user`, and `-turn-pass` flags support relay fallback, meaning encrypted traffic can travel **through a relay** rather than on a direct network path.
+
+```bash
+./Ghost-Linux-amd64 -help
+```
+
+## Data and security
+
+- The server stores account metadata, token hashes, and friend relationships in `ghost-data.json` (or the path supplied by `-data`).
+- Chat history is stored **locally in the current browser's IndexedDB**. It does not automatically sync between desktop browsers and Android devices.
+- Voice and chat/file connections use WebRTC encryption. The hub still sees identity, presence, and signaling metadata.
+- Message and file contents are **not** uploaded to the hub. Offline messages are not queued for delivery.
+- Export and safeguard your identity key before clearing browser data.
+- Ghost is a **personal-use prototype**, not an independently audited secure messenger.
 
 ## Build from source
 
-Install Go 1.23+ and run:
+Requires **Go 1.23+** for the desktop app; no third-party Go modules or Node runtime are required to build/run the Go server:
 
 ```bash
 go test ./...
 go build -o ghost .
+./ghost
 ```
 
-To cross-compile for Windows:
+The frontend is embedded with Go's `embed` package. The [GitHub Actions workflow](https://github.com/Cryosimorgh/Ghost/blob/main/.github/workflows/release.yml) cross-compiles native Windows/Linux releases, adds Windows icon resources, and separately compiles the Android debug APK with **JDK 17, Android SDK, and Gradle**. Node is used in CI only to syntax-check the browser script.
 
-```bash
-GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -o Ghost-console.exe .
-
-# Windows desktop executable (no console window)
-GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -ldflags="-H=windowsgui" -o Ghost.exe .
-```
-
-No third-party Go packages are required. All web assets are embedded into the executable. Release builds embed the Windows icon resource. Keep `ghost.ico` beside the executable as a tray-icon fallback.
-
-Existing v1 browser identities use the original `quietlink.*` localStorage keys for compatibility. If upgrading from QuietLink, rename `quietlink-data.json` to `ghost-data.json` or pass `-data quietlink-data.json`.
-
-## Windows tray and icons
-
-The bundled `ghost.ico`, multi-resolution PNGs, and `ghost.svg` provide a consistent identity across Explorer/taskbar, Windows notification tray, and the web favicon. The tray has Open Ghost and Exit Ghost commands. The optional `-tray=false` switch disables it. Server mode does not require a graphical desktop.
-
-## Validation scope
-
-- Go tests exercise registration, authentication, friend-request inbox, persistence, live Call ID discovery, signaling, and rejected cross-origin requests. `go test -race ./...` passes.
-- JavaScript passes `node --check web/app.js` syntax validation.
-- A two-browser smoke-test script is provided in `tests/browser-smoke.mjs`. It is designed to verify chat, mic, and receiver-requested file transfer; **it has not passed in the build environment**, where managed Chromium blocks navigation to localhost (`ERR_BLOCKED_BY_ADMINISTRATOR`). It can be run on a machine where Chromium allows local access.
-
-## Notes
-
-This is v1. Friends must be online for live messages and file transfers. Local history and saved identities stay in the browser used to create them. Back up your access key before clearing browser storage. A central hub is required even though media/file content is peer-to-peer.
-
-## v1.1 — responsive interface and microphone devices
-
-- The new Ghost mascot floats, blinks, peeks, darts, and glances toward a nearby mouse pointer. Clicking it makes it dodge. The animations are disabled if the OS requests reduced motion.
-- The phone/tablet layout has **People**, **Chat**, and **Audio** navigation instead of compacting the desktop layout into a strip.
-- Under **Audio**, choose an input microphone and, where supported, a playback device. Browser output selection uses `HTMLMediaElement.setSinkId`. Some browsers manage playback via the OS instead.
-- **Test mic** acquires the microphone locally, draws a frequency spectrum and input meter, and does not send the audio to the peer or speakers. **Start voice** acquires and processes the selected mic for WebRTC transmission. The SNR slider remains a gate threshold, not a magic quality enhancer.
-- The mic gain input is still an unrestricted numeric value in **dB** (dBi refers to antenna gain).
-
-## Android client (v1.1 preview)
-
-The Android APK is a **WebView client**, not an on-device Go hub. Start a shared HTTPS-enabled Ghost hub on a reachable host first. When the Android app opens, enter its `https://` URL. The Android device can then join the same accounts and calls as desktop users, with its own local IndexedDB chat history.
-
-- Android 10+ (API 29+); microphone access is requested when you use Test mic or Start voice.
-- Microphone selection uses WebRTC's browser device enumeration when exposed by Android WebView. Output routing is provided by Android `AudioManager` on Android 12+ when available; otherwise the OS controls output.
-- Android file offers use the system document picker. Receiver-triggered P2P file transfers save directly into **Downloads/Ghost** using the native Android bridge: no file bytes are uploaded to the signaling hub.
-- The preview APK is signed with an ephemeral **debug signing key** by GitHub Actions, not a long-term production key. You may need to uninstall an earlier preview before upgrading.
-- The Android client is intended for foreground use; it does not provide background calling, push notifications, or a local hub. Do not bypass HTTPS certificate errors.
-
-Compile locally (Android SDK + JDK 17 + Gradle 8.10.2):
+To build Android locally:
 
 ```bash
 gradle -p android :app:assembleDebug
-# android/app/build/outputs/apk/debug/app-debug.apk
 ```
 
-The GitHub Actions workflow builds Windows, Linux, and Android preview artifacts and publishes them together as v1.1.0 after both jobs succeed.
+The Android output is `android/app/build/outputs/apk/debug/app-debug.apk`.
+
+## Testing and limitations
+
+- Automated Go tests cover registration, authentication, friend requests, presence, persistence, signaling, and access checks. Windows/Linux and Android build jobs have passed in GitHub Actions.
+- JavaScript syntax checking passes. A two-browser WebRTC smoke test is included at `tests/browser-smoke.mjs`, but **live end-to-end voice, chat, and file transfer remain unverified in CI** due to Chromium localhost restrictions.
+- Browser microphone and output-device APIs vary; HTTPS is generally required for microphone access on a remote host.
+- No background Android calls, push notifications, offline chat delivery, or cross-device history synchronization.
+
+[**Releases**](https://github.com/Cryosimorgh/Ghost/releases) · [**Issues**](https://github.com/Cryosimorgh/Ghost/issues) · [**Source**](https://github.com/Cryosimorgh/Ghost)

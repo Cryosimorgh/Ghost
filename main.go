@@ -626,7 +626,7 @@ func originFor(r *http.Request) string {
 }
 func main() {
 	tray := flag.Bool("tray", runtime.GOOS == "windows", "show Ghost in the Windows notification area; includes Open and Exit")
-	open := flag.Bool("open", runtime.GOOS == "windows", "open the local web interface after starting the hub")
+	open := flag.Bool("open", runtime.GOOS == "windows" || (runtime.GOOS == "linux" && (os.Getenv("DISPLAY") != "" || os.Getenv("WAYLAND_DISPLAY") != "")), "open the local web interface after starting the hub")
 	listen := flag.String("listen", "127.0.0.1:8787", "listen address; use 0.0.0.0:8787 to accept remote clients")
 	data := flag.String("data", "ghost-data.json", "hub identity and friend mailbox database (not message history)")
 	cert := flag.String("tls-cert", "", "TLS certificate PEM (for remote mic access)")

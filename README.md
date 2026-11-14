@@ -2,6 +2,17 @@
 
 Small, self-hosted Go + browser WebRTC application for **direct voice, chat, and on-demand file transfer**. No Node runtime, npm packages, external database, SMTP server, or cloud account is needed.
 
+## Standalone desktop executables (v1.1.1)
+
+Windows and Linux have **native, portable Go binaries with the entire web interface embedded**. No Java, JavaScript server runtime, Node.js, npm, Go installation, or setup wizard is required. A normal browser installed on the desktop displays the interface; Ghost starts its own local hub. You do not need a web server or database service.
+
+- **Windows:** Download `Ghost-Windows-amd64.exe` and double-click it. The app runs in the system tray and opens the UI in your default browser. Alternatively use the Windows ZIP (which contains the headless/console build).
+- **Linux x86-64:** Download `Ghost-Linux-amd64`, run `chmod +x Ghost-Linux-amd64` once, then `./Ghost-Linux-amd64`. Under a graphical desktop, the UI opens in your default browser. The Linux ZIP also includes an executable `Start Ghost.sh` launcher. Use `./Ghost-Linux-amd64 -open=false` on headless servers.
+
+No external file is required beside either executable. User account metadata is written to `ghost-data.json` in the working directory; browser-local chat history remains on that device. Online contacts still require a *shared* hub reachable by both users; distributing a standalone executable does not eliminate that discovery requirement.
+
+**Runtime verification:** Linux is compiled with `CGO_ENABLED=0` and is a statically linked ELF; Windows with `CGO_ENABLED=0` and a Win32 tray icon resource. Java is only used in CI to compile the separate Android APK. Node is only a CI syntax-check tool, not a desktop runtime.
+
 ## Start on Windows
 
 1. Unzip the Windows release and launch **Ghost.exe** (or `Start Ghost.cmd`). Ghost runs in the notification area (system tray) without a console window. Right-click its icon for **Open Ghost** / **Exit Ghost**. Use **Ghost-console.exe** for verbose logs and headless hosting (`-tray=false -open=false`).

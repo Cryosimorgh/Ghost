@@ -63,6 +63,7 @@ type Hub struct {
 	stun                        []string
 	turnURL, turnUser, turnPass string
 	mesh                        *Mesh
+	settings                    *settingsAPI
 }
 type Friend struct {
 	ID     string `json:"id"`
@@ -683,6 +684,12 @@ func (h *Hub) routes() http.Handler {
 	mux.HandleFunc("/api/register", h.register)
 	mux.HandleFunc("/api/me", h.me)
 	mux.HandleFunc("/api/config", h.config)
+	if h.settings != nil {
+		mux.HandleFunc("/api/settings", func(w http.ResponseWriter, r *http.Request) { h.settings.handler(w, r, h) })
+		mux.HandleFunc("/api/settings/restart", func(w http.ResponseWriter, r *http.Request) { h.settings.restartHandler(w, r, h) })
+		mux.HandleFunc("/api/settings/test-directory", func(w http.ResponseWriter, r *http.Request) { h.settings.testDirectory(w, r, h) })
+		mux.HandleFunc("/api/settings/public-ip", func(w http.ResponseWriter, r *http.Request) { h.settings.detectIP(w, r, h) })
+	}
 	mux.HandleFunc("/api/friends", h.friends)
 	mux.HandleFunc("/api/friend/request", h.requestFriend)
 	mux.HandleFunc("/api/friend/respond", h.respondFriend)
@@ -731,26 +738,38 @@ func originFor(r *http.Request) string {
 	return scheme + "://" + r.Host
 }
 func main() {
+	userConfigDir, dirErr := os.UserConfigDir()
+	if dirErr != nil {
+		log.Fatalf("Cannot locate user configuration directory: %v", dirErr)
+	}
+	settingsPath := filepath.Join(userConfigDir, "Ghost", "network.json")
+	cfg, cfgErr := loadNetworkSettings(settingsPath)
+	if cfgErr != nil {
+		log.Fatalf("Cannot read GUI network settings: %v", cfgErr)
+	}
+	if os.Getenv("GHOST_RESTARTING") == "1" {
+		time.Sleep(1400 * time.Millisecond)
+	}
 	tray := flag.Bool("tray", runtime.GOOS == "windows", "show Ghost in the Windows notification area; includes Open and Exit")
 	open := flag.Bool("open", runtime.GOOS == "windows" || (runtime.GOOS == "linux" && (os.Getenv("DISPLAY") != "" || os.Getenv("WAYLAND_DISPLAY") != "")), "open the local web interface after starting the hub")
 	listen := flag.String("listen", "127.0.0.1:8787", "local web UI listen address")
-	meshListen := flag.String("peer-listen", "0.0.0.0:8788", "peer discovery and signaling TCP listener")
-	advertise := flag.String("peer-advertise", "", "externally reachable http(s)://hostname:port for your peer listener")
-	peerCert := flag.String("peer-tls-cert", "", "TLS certificate for direct peer listener only")
-	peerKey := flag.String("peer-tls-key", "", "TLS private key for direct peer listener only")
+	meshListen := flag.String("peer-listen", cfg.PeerListen, "peer discovery and signaling TCP listener")
+	advertise := flag.String("peer-advertise", cfg.PeerAdvertise, "externally reachable http(s)://hostname:port for your peer listener")
+	peerCert := flag.String("peer-tls-cert", cfg.PeerTLSCert, "TLS certificate for direct peer listener only")
+	peerKey := flag.String("peer-tls-key", cfg.PeerTLSKey, "TLS private key for direct peer listener only")
 	meshEnabled := flag.Bool("peers", true, "enable direct node-to-node discovery and signaling")
-	lan := flag.Bool("lan", true, "enable multicast LAN peer discovery")
-	directoryHost := flag.String("directory-host", "", "optional rendezvous directory host (your own Python server); empty disables")
-	directoryPublishPort := flag.Int("directory-publish-port", 47801, "directory publication TCP port")
-	directoryLookupPort := flag.Int("directory-lookup-port", 47802, "directory lookup TCP port")
-	directoryTLS := flag.Bool("directory-tls", false, "use trusted TLS for both directory sockets")
+	lan := flag.Bool("lan", cfg.LAN, "enable multicast LAN peer discovery")
+	directoryHost := flag.String("directory-host", cfg.DirectoryHost, "optional rendezvous directory host (your own Python server); empty disables")
+	directoryPublishPort := flag.Int("directory-publish-port", cfg.DirectoryPublishPort, "directory publication TCP port")
+	directoryLookupPort := flag.Int("directory-lookup-port", cfg.DirectoryLookupPort, "directory lookup TCP port")
+	directoryTLS := flag.Bool("directory-tls", cfg.DirectoryTLS, "use trusted TLS for both directory sockets")
 	data := flag.String("data", "ghost-data.json", "hub identity and friend mailbox database (not message history)")
 	cert := flag.String("tls-cert", "", "TLS certificate PEM (for remote mic access)")
 	key := flag.String("tls-key", "", "TLS private key PEM")
-	stun := flag.String("stun", "", "comma-separated optional STUN server URLs (empty by default, no external infrastructure)")
-	turn := flag.String("turn-url", "", "TURN URLs, comma-separated (e.g. turn:relay.example.org:3478)")
-	turnUser := flag.String("turn-user", "", "TURN username")
-	turnPass := flag.String("turn-pass", "", "TURN credential")
+	stun := flag.String("stun", cfg.STUN, "comma-separated optional STUN server URLs (empty by default, no external infrastructure)")
+	turn := flag.String("turn-url", cfg.TURNURL, "TURN URLs, comma-separated (e.g. turn:relay.example.org:3478)")
+	turnUser := flag.String("turn-user", cfg.TURNUser, "TURN username")
+	turnPass := flag.String("turn-pass", cfg.TURNPass, "TURN credential")
 	flag.Parse()
 	if (*peerCert == "") != (*peerKey == "") {
 		log.Fatal("Provide both -peer-tls-cert and -peer-tls-key")
@@ -758,7 +777,17 @@ func main() {
 	if (*cert == "") != (*key == "") {
 		log.Fatal("Provide both -tls-cert and -tls-key")
 	}
+	activeCfg := NetworkSettings{
+		DirectoryHost: *directoryHost, DirectoryPublishPort: *directoryPublishPort, DirectoryLookupPort: *directoryLookupPort,
+		DirectoryTLS: *directoryTLS, PeerListen: *meshListen, PeerAdvertise: *advertise,
+		PeerTLSCert: *peerCert, PeerTLSKey: *peerKey, LAN: *lan,
+		STUN: *stun, TURNURL: *turn, TURNUser: *turnUser, TURNPass: *turnPass,
+	}
+	if err := activeCfg.validate(); err != nil {
+		log.Fatalf("Invalid network configuration: %v", err)
+	}
 	h := newHub(*data)
+	h.settings = &settingsAPI{path: settingsPath, active: activeCfg}
 	if err := h.load(); err != nil {
 		log.Fatalf("Cannot load hub state: %v", err)
 	}
@@ -798,6 +827,7 @@ func main() {
 		log.Printf("Ghost peer listener at %s (node key %s...)", mesh.url, mesh.public[:12])
 	}
 	srv := &http.Server{Addr: *listen, Handler: h.routes(), ReadHeaderTimeout: 8 * time.Second, IdleTimeout: 90 * time.Second, MaxHeaderBytes: 1 << 20, BaseContext: func(net.Listener) context.Context { return context.Background() }}
+	h.settings.restart = func() error { return launchDesktopRestart(*data, *listen, *tray, srv, h.mesh) }
 	protocol := "http"
 	if *cert != "" {
 		protocol = "https"

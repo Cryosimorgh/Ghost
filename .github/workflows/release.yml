@@ -57,9 +57,9 @@ jobs:
           cp dist/windows/Ghost.exe dist/Ghost-Windows-amd64.exe
           cp dist/linux/Ghost-linux-amd64 dist/Ghost-Linux-amd64
           chmod +x dist/Ghost-Linux-amd64
-          (cd dist/windows && zip -q ../Ghost-Windows-v1.4.0.zip *)
-          (cd dist/linux && zip -q ../Ghost-Linux-v1.4.0.zip *)
-          git archive --format=zip HEAD -o dist/Ghost-Source-v1.4.0.zip
+          (cd dist/windows && zip -q ../Ghost-Windows-v1.5.0.zip *)
+          (cd dist/linux && zip -q ../Ghost-Linux-v1.5.0.zip *)
+          git archive --format=zip HEAD -o dist/Ghost-Source-v1.5.0.zip
       - uses: actions/upload-artifact@v4
         with:
           name: desktop-packages
@@ -87,11 +87,11 @@ jobs:
       - name: Stage APK
         run: |
           mkdir -p dist
-          cp android/app/build/outputs/apk/debug/app-debug.apk dist/Ghost-Android-v1.4.0-preview.apk
+          cp android/app/build/outputs/apk/debug/app-debug.apk dist/Ghost-Android-v1.5.0-preview.apk
       - uses: actions/upload-artifact@v4
         with:
           name: android-package
-          path: dist/Ghost-Android-v1.4.0-preview.apk
+          path: dist/Ghost-Android-v1.5.0-preview.apk
           if-no-files-found: error
 
   release:
@@ -106,24 +106,19 @@ jobs:
         with:
           name: android-package
           path: dist
-      - name: Publish v1.4.0 and attach missing Android preview
+      - name: Publish v1.5.0 without overwriting existing releases
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         shell: bash
         run: |
           set -euo pipefail
-          sha256sum dist/Ghost-Android-v1.4.0-preview.apk > dist/Ghost-Android-v1.4.0-preview.apk.sha256
-          sha256sum dist/Ghost-*.zip dist/Ghost-Windows-amd64.exe dist/Ghost-Linux-amd64 dist/Ghost-Android-v1.4.0-preview.apk > dist/SHA256SUMS.txt
-          if gh release view v1.4.0 >/dev/null 2>&1; then
-            if gh release view v1.4.0 --json assets -q '.assets[].name' | grep -Fxq 'Ghost-Android-v1.4.0-preview.apk'; then
-              echo 'Android preview already attached; existing release preserved.'
-            else
-              gh release upload v1.4.0 dist/Ghost-Android-v1.4.0-preview.apk dist/Ghost-Android-v1.4.0-preview.apk.sha256
-            fi
+          sha256sum dist/Ghost-* > dist/SHA256SUMS.txt
+          if gh release view v1.5.0 >/dev/null 2>&1; then
+            echo 'v1.5.0 already exists; existing release preserved.'
             exit 0
           fi
-          gh release create v1.4.0 dist/Ghost-*.zip dist/Ghost-Windows-amd64.exe dist/Ghost-Linux-amd64 dist/Ghost-Android-v1.4.0-preview.apk dist/Ghost-Android-v1.4.0-preview.apk.sha256 dist/SHA256SUMS.txt \
+          gh release create v1.5.0 dist/Ghost-* dist/SHA256SUMS.txt \
             --target "$GITHUB_SHA" \
-            --title 'Ghost v1.4.0 — One-Time Direct Connect' \
-            --notes 'Optional separate Direct Connect funnel: a 10-minute, one-use opaque invite code; an OS-selected ephemeral or explicitly forwarded pairing TCP port; X25519 + AES-GCM full-duplex signaling tunnel; listening port closes after one authenticated pairing. Existing LAN discovery, manual peer URLs, and optional Python rendezvous directory preserved. The invite is a bearer secret, not IP anonymity; recipients can decrypt the IP. At least one reachable port still required. WebRTC voice/data remains separate and physical-device media testing is unverified. Android preview is not a standalone mesh node.'
+            --title 'Ghost v1.5.0 — Focused UI & in-app network settings' \
+            --notes 'Focused Chats / Connect / Audio / Settings layout, in-GUI directory and node configuration with persistence and restart, manual or opt-in public IP detection, directory reachability test, and lossless 64-bit code copy. Existing Direct Connect, LAN discovery, directory, voice, and files retained. Android APK remains a WebView preview requiring a reachable Ghost desktop node, not a standalone peer. Optional separate Direct Connect funnel: a 10-minute, one-use opaque invite code; an OS-selected ephemeral or explicitly forwarded pairing TCP port; X25519 + AES-GCM full-duplex signaling tunnel; listening port closes after one authenticated pairing. Existing LAN discovery, manual peer URLs, and optional Python rendezvous directory preserved. The invite is a bearer secret, not IP anonymity; recipients can decrypt the IP. At least one reachable port still required. WebRTC voice/data remains separate and physical-device media testing is unverified. Android preview is not a standalone mesh node.'

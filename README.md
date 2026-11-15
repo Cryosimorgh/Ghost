@@ -4,15 +4,31 @@
 
 Ghost is a lightweight Go desktop application with a local web UI, an animated ghost, contacts, WebRTC calls, messages, and local history. **Each desktop instance runs its own node**; two users do not have to connect to the same hub.
 
-[**Windows EXE**](https://github.com/Cryosimorgh/Ghost/releases/download/v1.4.0/Ghost-Windows-amd64.exe) · [**Linux binary**](https://github.com/Cryosimorgh/Ghost/releases/download/v1.4.0/Ghost-Linux-amd64) · [**Android preview APK**](https://github.com/Cryosimorgh/Ghost/releases/download/v1.4.0/Ghost-Android-v1.4.0-preview.apk) · [**Releases**](https://github.com/Cryosimorgh/Ghost/releases) · [**Issues**](https://github.com/Cryosimorgh/Ghost/issues)
+[**Windows EXE**](https://github.com/Cryosimorgh/Ghost/releases/download/v1.5.0/Ghost-Windows-amd64.exe) · [**Linux binary**](https://github.com/Cryosimorgh/Ghost/releases/download/v1.5.0/Ghost-Linux-amd64) · [**Android preview APK**](https://github.com/Cryosimorgh/Ghost/releases/download/v1.5.0/Ghost-Android-v1.5.0-preview.apk) · [**Releases**](https://github.com/Cryosimorgh/Ghost/releases) · [**Issues**](https://github.com/Cryosimorgh/Ghost/issues)
 
-> **Scope of v1.4.0:** Automatic LAN discovery, an **optional self-hosted RAM-only Python rendezvous directory** for finding nodes by stable 64-bit codes, and a **separate one-time Direct Connect funnel** for pairing by an encrypted invite code without using a directory. There is no global account search, public server run by Ghost, NAT relay, or guaranteed cross-NAT connectivity. The directory is *not* the shared Ghost signaling hub from early releases. The Android v1.4 preview is still a WebView client of a reachable desktop node, **not a fully standalone decentralized Android node**. Live two-browser WebRTC media/data transfer has not yet been independently verified.
+> **Network architecture (v1.5):** Automatic LAN discovery, an **optional self-hosted RAM-only Python rendezvous directory** for finding nodes by stable 64-bit codes, and a **separate one-time Direct Connect funnel** for pairing by an encrypted invite code without using a directory. There is no global account search, public server run by Ghost, NAT relay, or guaranteed cross-NAT connectivity. The directory is *not* the shared Ghost signaling hub from early releases. The Android preview is still a WebView client of a reachable desktop node, **not a fully standalone decentralized Android node**. Live two-browser WebRTC media/data transfer has not yet been independently verified.
+
+## Set up networking in the app (v1.5)
+
+**You do not need PowerShell or startup flags for normal setup.**
+
+1. Open Ghost and choose **Settings** in the left navigation (or bottom navigation on a narrow screen).
+2. Under **Directory**, enter the Python server's IP / hostname. The default ports are **47801** (publish) and **47802** (lookup). Turn on TLS if your server has a trusted certificate. Click **Test directory connection** to check lookup connectivity.
+3. Under **Your peer address**, keep the listener at `0.0.0.0:8788`. Enter your publicly reachable endpoint, e.g. `http://203.0.113.25:8788`, or choose **Detect IP** (an explicit, one-time query to api.ipify.org). You must still forward TCP 8788 on your router if behind NAT. TLS for the peer listener is separate and accepts paths to a certificate and key.
+4. **Save and restart Ghost.** The settings are stored privately in the user config folder (`%AppData%\Ghost\network.json` on Windows, `~/.config/Ghost/network.json` on typical Linux systems), and Ghost restarts the local node automatically. Active calls disconnect during restart. Future launches reuse the settings.
+5. Open **Connect**. Your short directory code appears when publication succeeds. Share that code privately; your friend enters it in the peer address/code field. They only need the directory hostname configured to resolve your code (and their own endpoint need not be publicly reachable to initiate signaling).
+
+**Without the directory:** Open **Connect** and use the one-time private code to pair. **On a LAN:** Ghost can find peers automatically. **Audio** contains mic/speaker selection, live spectrum, dB gain, and the SNR gate. **Chats** stays uncluttered.
+
+**Networking reality:** The directory stores only temporary addresses and does not relay voice/chat/files or bypass CGNAT. Direct P2P still requires a reachable path. An advertised IP detected through a public service may be your router or CGNAT address, not a reachable computer.
+
+> Android remains an experimental WebView client of a reachable Ghost host, **not** a standalone Go peer. This desktop UI update does not fix that Android networking limitation. Live calls and files across two physical public networks remain unverified.
 
 ## Quick start
 
-**Windows (x64):** download [Ghost-Windows-amd64.exe](https://github.com/Cryosimorgh/Ghost/releases/download/v1.4.0/Ghost-Windows-amd64.exe), run it, and allow local-network access through Windows Firewall when prompted. Ghost runs in the notification tray and opens your browser automatically.
+**Windows (x64):** download [Ghost-Windows-amd64.exe](https://github.com/Cryosimorgh/Ghost/releases/download/v1.5.0/Ghost-Windows-amd64.exe), run it, and allow local-network access through Windows Firewall when prompted. Ghost runs in the notification tray and opens your browser automatically.
 
-**Linux (x86-64):** download [Ghost-Linux-amd64](https://github.com/Cryosimorgh/Ghost/releases/download/v1.4.0/Ghost-Linux-amd64):
+**Linux (x86-64):** download [Ghost-Linux-amd64](https://github.com/Cryosimorgh/Ghost/releases/download/v1.5.0/Ghost-Linux-amd64):
 
 ```bash
 chmod +x Ghost-Linux-amd64
@@ -20,12 +36,6 @@ chmod +x Ghost-Linux-amd64
 ```
 
 Both are single Go executables with the UI embedded. **No Java, Node, npm, Go installation, or hosted signaling account is required.** They use an existing browser to display the UI. Ghost's browser interface is local to your device at `http://127.0.0.1:8787`; network peers use a **separate** listener on TCP `8788`.
-
-### Android preview (v1.4.0)
-
-Download the [Android APK](https://github.com/Cryosimorgh/Ghost/releases/download/v1.4.0/Ghost-Android-v1.4.0-preview.apk) and install it on Android 10+ (allow installation from your browser/files app when asked). It is a **debug-signed WebView client**, not a standalone node.
-
-**Important:** The Android preview needs a reachable Ghost instance's **HTTPS web-interface URL** (for example, a trusted desktop host with HTTPS enabled). It **does not** currently generate/accept one-time Direct Connect codes, listen for LAN peers, or host the Go mesh itself. These features are available in the Windows/Linux desktop versions. The Android APK should not be mistaken for Direct Connect feature parity. Microphone access requires permission; files use the system picker and Android Downloads. No background calls or notifications.
 
 ### Find another Ghost on your LAN
 
@@ -122,7 +132,7 @@ The UI has desktop and mobile-responsive layouts, reduced-motion support, and a 
 - The LAN hello endpoint advertises active local Mail IDs, names, and Call IDs to reachable nodes. Disable discovery (`-lan=false`) or restrict access with a firewall when that is undesirable.
 - On the legacy direct HTTP route, node-to-node signaling metadata is visible unless TLS is enabled. The one-use Direct Connect route encrypts signaling over the tunnel independently of HTTP TLS. WebRTC media/data channels use DTLS/SRTP encryption. Remote addresses may reveal IP locations. Signed polling responses support a private node behind NAT when one side has a reachable peer port.
 - Browser ICE may fail even when node-to-node signaling succeeds. No default STUN, TURN, NAT punch-through service, or global DHT is provided.
-- No offline mail, background call wakeup, push notification, or multi-device browser history sync. Android v1.4.0 preview is **not** an independent Ghost P2P node and cannot participate in the new automatic LAN discovery on its own.
+- No offline mail, background call wakeup, push notification, or multi-device browser history sync. Android v1.1.0 is **not** an independent Ghost P2P node and cannot participate in the new automatic LAN discovery on its own.
 - Ghost is an **experimental personal-use messenger**, not an audited end-to-end identity or anonymity system.
 
 ## CLI options

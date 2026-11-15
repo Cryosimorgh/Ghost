@@ -617,7 +617,12 @@ func (m *Mesh) apiStatus(w http.ResponseWriter, r *http.Request) {
 	links := len(m.direct)
 	inviteOpen := m.invite != nil
 	m.directMu.Unlock()
-	sendJSON(w, 200, map[string]any{"directLinks": links, "directInviteOpen": inviteOpen, "peers": out, "nodeKey": m.public, "address": m.url, "addresses": m.addresses(), "directoryCode": code, "directoryEnabled": enabled, "discovery": "LAN multicast + optional short-lived rendezvous directory"})
+	// 63-bit IDs exceed JavaScript Number precision: always transmit as decimal text.
+	codeText := ""
+	if code > 0 {
+		codeText = strconv.FormatInt(code, 10)
+	}
+	sendJSON(w, 200, map[string]any{"directLinks": links, "directInviteOpen": inviteOpen, "peers": out, "nodeKey": m.public, "address": m.url, "addresses": m.addresses(), "directoryCode": codeText, "directoryEnabled": enabled, "discovery": "LAN multicast + optional short-lived rendezvous directory"})
 }
 func (m *Mesh) apiConnect(w http.ResponseWriter, r *http.Request) {
 	if !method(w, r, "POST") {

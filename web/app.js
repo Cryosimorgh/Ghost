@@ -320,7 +320,7 @@ function setSelected(id, name) {
   const f = currentFriend(id);
   if (f) ui.dial.value = f.online && f.callId ? f.callId : '';
   renderFriends(); renderHistory(); updateState();
-  if (window.matchMedia('(max-width: 760px)').matches) { $('app').dataset.mobileView='chat'; document.querySelectorAll('.mobile-nav button').forEach(b=>b.classList.toggle('active',b.dataset.view==='chat')); }
+  setView('chat');
 }
 function renderFriends() {
   ui.friends.replaceChildren(); ui.friendCount.textContent = String(friendState.friends.length);
@@ -814,6 +814,8 @@ async function refreshMesh() {
       $('directCode').value = '';
     }
     $('directoryRow').hidden = !state.directoryEnabled;
+    const live = $('directoryLiveStatus');
+    if (live) { live.textContent = !state.directoryEnabled ? 'Disabled' : state.directoryCode ? 'Published' : 'Lookup only / waiting'; live.classList.toggle('is-live', Boolean(state.directoryCode)); }
     $('directoryCode').textContent = state.directoryCode ? String(state.directoryCode) : 'Not advertised · set peer-advertise';
     $('meshSelf').textContent = (state.addresses || []).find(a => !a.includes('127.0.0.1')) || state.address || 'Unknown address';
     const target = $('meshPeers'); target.replaceChildren();
@@ -957,17 +959,100 @@ async function copy(value) {
   try { await navigator.clipboard.writeText(value); toast('Copied to clipboard'); }
   catch { toast('Clipboard permission not available', true); }
 }
-function wireMobileNavigation() {
-  const buttons = [...document.querySelectorAll('.mobile-nav button')];
-  const choose = (view) => {
-    $('app').dataset.mobileView = view;
-    buttons.forEach(b=>{ b.classList.toggle('active',b.dataset.view===view); b.setAttribute('aria-current',b.dataset.view===view?'page':'false'); });
-  };
-  buttons.forEach(b=>b.addEventListener('click',()=>choose(b.dataset.view)));
-  choose('chat');
+function setView(view) {
+  if (!['chat', 'people', 'connect', 'audio', 'settings'].includes(view)) return;
+  $('app').dataset.view = view;
+  $('app').dataset.mobileView = view;
+  document.querySelectorAll('[data-view].primary-nav button, .primary-nav [data-view], .mobile-nav [data-view]').forEach(button => {
+    const active = button.dataset.view === view;
+    button.classList.toggle('active', active);
+    button.setAttribute('aria-current', active ? 'page' : 'false');
+  });
+  if (view === 'settings') refreshNetworkSettings().catch(e => toast(e.message, true));
+  if (view === 'audio') requestAnimationFrame(updateMicDisplay);
+}
+function wireNavigation() {
+  document.querySelectorAll('.primary-nav [data-view], .mobile-nav [data-view]').forEach(button => {
+    button.addEventListener('click', () => setView(button.dataset.view));
+  });
+  setView('chat');
+}
+const settingsFields = [
+  ['directoryHost','cfgDirectoryHost'],['directoryPublishPort','cfgDirectoryPublishPort'],
+  ['directoryLookupPort','cfgDirectoryLookupPort'],['directoryTLS','cfgDirectoryTLS'],
+  ['peerListen','cfgPeerListen'],['peerAdvertise','cfgPeerAdvertise'],
+  ['peerTLSCert','cfgPeerTLSCert'],['peerTLSKey','cfgPeerTLSKey'],
+  ['lan','cfgLAN'],['stun','cfgSTUN'],['turnURL','cfgTURNURL'],
+  ['turnUser','cfgTURNUser'],['turnPass','cfgTURNPass']
+];
+let settingsRefreshPending = false;
+async function refreshNetworkSettings() {
+  if (!identity || settingsRefreshPending) return;
+  settingsRefreshPending = true;
+  try {
+    const data = await api('/api/settings');
+    for (const [key,id] of settingsFields) {
+      const input = $(id);
+      if (input.type === 'checkbox') input.checked = Boolean(data.settings[key]);
+      else input.value = String(data.settings[key] ?? '');
+    }
+    $('networkSettingsStatus').textContent = 'Settings on this device. Changes take effect after restarting the local node.';
+  } finally { settingsRefreshPending = false; }
+}
+function networkSettingsPayload() {
+  const output = {};
+  for (const [key,id] of settingsFields) {
+    const input = $(id);
+    output[key] = input.type === 'checkbox' ? input.checked :
+      input.type === 'number' ? Number(input.value) : input.value.trim();
+  }
+  return output;
+}
+function wireSettings() {
+  const form = $('networkSettingsForm');
+  const save = $('saveNetworkSettings');
+  const status = $('networkSettingsStatus');
+  form.addEventListener('submit', async e => {
+    e.preventDefault(); save.disabled = true;
+    try {
+      await api('/api/settings', { method: 'PUT', body: networkSettingsPayload() });
+      status.textContent = 'Saved. Restarting the local Ghost node…';
+      await api('/api/settings/restart', {method:'POST', body:{}});
+      // Do not discard identities, local history, or existing browser settings.
+      for (let i=0;i<25;i++) {
+        await new Promise(resolve => setTimeout(resolve, 500));
+        try { const r = await fetch('/api/config', {cache:'no-store'}); if (r.ok && i>=2) { location.reload(); return; } } catch {}
+      }
+      status.textContent = 'Settings saved. Automatic restart could not be verified. Reopen Ghost if necessary.';
+    } catch (err) { status.textContent = `Could not apply settings: ${err.message}`; toast(err.message, true); }
+    finally {save.disabled = false;}
+  });
+  $('testDirectory').addEventListener('click', async e => {
+    const button = e.currentTarget; button.disabled = true;
+    try {
+      const state = networkSettingsPayload();
+      if (!state.directoryHost) throw Error('Enter a directory host first.');
+      const r = await api('/api/settings/test-directory', {method:'POST',body:{host:state.directoryHost,tls:state.directoryTLS,publish:state.directoryPublishPort,lookup:state.directoryLookupPort}});
+      status.textContent = r.message; toast('Directory lookup port is reachable.');
+    } catch(err) { status.textContent = err.message; toast(err.message, true); }
+    finally {button.disabled=false;}
+  });
+  $('findPublicIP').addEventListener('click', async e => {
+    if (!window.confirm('Detecting your public IP contacts api.ipify.org once. Continue?')) return;
+    const button = e.currentTarget;button.disabled=true;
+    try {
+      const r = await api('/api/settings/public-ip',{method:'POST',body:{}});
+      const listen = $('cfgPeerListen').value;
+      const port = Number(listen.substring(listen.lastIndexOf(':') + 1)) || 8788;
+      const https = Boolean($('cfgPeerTLSCert').value && $('cfgPeerTLSKey').value);
+      $('cfgPeerAdvertise').value = `${https?'https':'http'}://${r.ip.includes(':')?'['+r.ip+']':r.ip}:${port}`;
+      status.textContent = r.warning;
+    } catch(err){toast(err.message,true)}
+    finally {button.disabled=false;}
+  });
 }
 async function main() {
-  initControls(); wireAudioDevices(); wireGhosts(); wireMobileNavigation(); renderEmpty(true); await wireEvents();
+  initControls(); wireAudioDevices(); wireGhosts(); wireNavigation(); wireSettings(); renderEmpty(true); await wireEvents();
   try { localDB = await openHistoryDB(); }
   catch (e) { toast(`History storage unavailable: ${e.message}`, true); }
   try { const cfg = await api('/api/config'); iceServers = cfg.iceServers || []; }

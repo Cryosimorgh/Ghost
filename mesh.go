@@ -75,6 +75,9 @@ type Mesh struct {
 	directory     *directoryClient
 	directoryCode int64
 	stop          chan struct{}
+	directMu      sync.Mutex
+	direct        map[string]*directSession
+	invite        *directPendingInvite
 }
 
 func meshKey(path string) (ed25519.PrivateKey, error) {
@@ -113,7 +116,7 @@ func meshKey(path string) (ed25519.PrivateKey, error) {
 }
 func newMesh(h *Hub, private ed25519.PrivateKey) *Mesh {
 	key := base64.RawURLEncoding.EncodeToString(private.Public().(ed25519.PublicKey))
-	return &Mesh{h: h, private: private, public: key, peers: make(map[string]*MeshPeer), nonces: make(map[string]time.Time), acks: make(map[string]map[string]bool), stop: make(chan struct{}), client: &http.Client{Timeout: 4 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}
+	return &Mesh{h: h, private: private, public: key, peers: make(map[string]*MeshPeer), nonces: make(map[string]time.Time), acks: make(map[string]map[string]bool), stop: make(chan struct{}), direct: make(map[string]*directSession), client: &http.Client{Timeout: 4 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}
 }
 func (m *Mesh) activeUsers() []MeshUser {
 	m.h.mu.Lock()
@@ -218,6 +221,9 @@ func (m *Mesh) authenticatePeer(w http.ResponseWriter, r *http.Request) (string,
 func (m *Mesh) post(ctx context.Context, peer *MeshPeer, path string, body any) error {
 	b, err := json.Marshal(body)
 	if err != nil {
+		return err
+	}
+	if active, err := m.directPost(ctx, peer.Key, path, b); active {
 		return err
 	}
 	// A non-public peer can make a signed outbound poll to a reachable peer.
@@ -607,7 +613,11 @@ func (m *Mesh) apiStatus(w http.ResponseWriter, r *http.Request) {
 	m.mu.RLock()
 	code, enabled := m.directoryCode, m.directory != nil
 	m.mu.RUnlock()
-	sendJSON(w, 200, map[string]any{"peers": out, "nodeKey": m.public, "address": m.url, "addresses": m.addresses(), "directoryCode": code, "directoryEnabled": enabled, "discovery": "LAN multicast + optional short-lived rendezvous directory"})
+	m.directMu.Lock()
+	links := len(m.direct)
+	inviteOpen := m.invite != nil
+	m.directMu.Unlock()
+	sendJSON(w, 200, map[string]any{"directLinks": links, "directInviteOpen": inviteOpen, "peers": out, "nodeKey": m.public, "address": m.url, "addresses": m.addresses(), "directoryCode": code, "directoryEnabled": enabled, "discovery": "LAN multicast + optional short-lived rendezvous directory"})
 }
 func (m *Mesh) apiConnect(w http.ResponseWriter, r *http.Request) {
 	if !method(w, r, "POST") {
@@ -664,8 +674,14 @@ func (m *Mesh) refresh(ctx context.Context) {
 	}
 	m.mu.RUnlock()
 	for _, p := range list {
+		m.directMu.Lock()
+		active := m.direct[p.Key] != nil
+		m.directMu.Unlock()
+		if active {
+			continue
+		}
 		reachable := false
-		if p.URL != "" {
+		if p.URL != "" && !strings.HasPrefix(p.URL, "direct://") {
 			ctx2, cancel := context.WithTimeout(ctx, 4*time.Second)
 			hello, err := m.getHello(ctx2, p.URL)
 			cancel()
@@ -755,6 +771,7 @@ func (m *Mesh) start(addr, advertise, cert, key string, discover bool) error {
 	return nil
 }
 func (m *Mesh) close() {
+	m.closeDirect()
 	select {
 	case <-m.stop:
 	default:

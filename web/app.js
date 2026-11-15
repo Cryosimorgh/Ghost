@@ -806,6 +806,13 @@ async function refreshMesh() {
     const state = await api('/api/peers');
     const items = state.peers || [];
     $('meshCount').textContent = String(items.filter(p=>p.online).length);
+    if (state.directLinks > 0) $('directState').textContent = `${state.directLinks} LINKED`;
+    else if (state.directInviteOpen) $('directState').textContent = 'LISTENING';
+    else {
+      $('directState').textContent = 'IDLE';
+      $('directOffer').hidden = true;
+      $('directCode').value = '';
+    }
     $('directoryRow').hidden = !state.directoryEnabled;
     $('directoryCode').textContent = state.directoryCode ? String(state.directoryCode) : 'Not advertised · set peer-advertise';
     $('meshSelf').textContent = (state.addresses || []).find(a => !a.includes('127.0.0.1')) || state.address || 'Unknown address';
@@ -844,6 +851,45 @@ async function wirePeerDiscovery() {
     e.preventDefault(); const input = $('meshAddress'); const address = input.value.trim(); if (!address) return;
     try { await api('/api/peers/connect',{ method:'POST',body:{address} }); input.value=''; await refreshMesh(); await refreshFriends(); toast('Peer found. You can add their Mail ID.'); }
     catch (err) { toast(`Cannot reach peer: ${err.message}`, true); }
+  });
+  // Independent one-use direct funnel; never replaces LAN or directory controls.
+  const directState = $('directState');
+  const directOffer = $('directOffer');
+  const directCode = $('directCode');
+  const directJoin = $('directJoinCode');
+  $('directInviteForm').addEventListener('submit', async event => {
+    event.preventDefault();
+    const btn = event.currentTarget.querySelector('button[type="submit"]');
+    btn.disabled = true;
+    try {
+      const host = $('directHost').value.trim();
+      const port = Number($('directPort').value);
+      const created = await api('/api/direct/invite', {method:'POST',body:{host,port}});
+      directCode.value = created.code;
+      directOffer.hidden = false;
+      directState.textContent = 'LISTENING';
+      $('directExpiry').textContent = `Listening on TCP ${created.port} · expires ${new Date(created.expires).toLocaleTimeString()}. Forward this port if behind NAT.`;
+      toast('One-time pairing port opened. Share the private code.');
+    } catch (error) { toast(`Invite failed: ${error.message}`, true); }
+    finally { btn.disabled = false; }
+  });
+  $('directCopy').addEventListener('click', () => copy(directCode.value));
+  $('directCancel').addEventListener('click', async () => {
+    try { await api('/api/direct/cancel', {method:'POST',body:{}}); directOffer.hidden = true; directCode.value = ''; directState.textContent = 'CLOSED'; toast('Invite revoked'); }
+    catch (error) { toast(error.message, true); }
+  });
+  $('directJoinForm').addEventListener('submit', async event => {
+    event.preventDefault();
+    const btn = event.currentTarget.querySelector('button[type="submit"]');
+    btn.disabled = true;
+    try {
+      await api('/api/direct/join', {method:'POST',body:{code:directJoin.value.trim()}});
+      directJoin.value = '';
+      directState.textContent = 'LINKED';
+      await refreshMesh(); await refreshFriends();
+      toast('Encrypted tunnel established. Select a peer under Nearby Nodes.');
+    } catch (error) { toast(`Direct connection failed: ${error.message}`, true); }
+    finally { btn.disabled = false; }
   });
   await refreshMesh();
   setInterval(refreshMesh, 6500);

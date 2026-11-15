@@ -43,6 +43,27 @@
           </form>
           <p class="mesh-note">LAN nodes appear automatically. Optional self-hosted directory resolves temporary public addresses by code.</p>
         </section>
+        <section class="direct-panel" aria-label="One-time direct connection">
+          <div class="direct-title"><span>ONE-TIME DIRECT LINK</span><span class="direct-state" id="directState">IDLE</span></div>
+          <p>Separate from LAN and directory. One socket opens for pairing; an encrypted two-way tunnel takes over.</p>
+          <form id="directInviteForm" class="direct-form">
+            <label for="directHost">REACHABLE IP / HOSTNAME</label>
+            <input id="directHost" type="text" placeholder="Public IP or DNS name" maxlength="253" spellcheck="false" autocomplete="off" required>
+            <div class="direct-row"><div><label for="directPort">PAIRING TCP PORT</label><input id="directPort" type="number" min="0" max="65535" value="0" required title="0 = temporary OS-assigned port; use a forwarded fixed port behind a router"></div><button type="submit" class="direct-action">CREATE INVITE</button></div>
+          </form>
+          <div id="directOffer" class="direct-offer" hidden>
+            <label for="directCode">YOUR ONE-USE CODE</label>
+            <textarea id="directCode" rows="3" readonly spellcheck="false"></textarea>
+            <div class="direct-actions"><button type="button" id="directCopy">COPY CODE</button><button type="button" id="directCancel">REVOKE</button></div>
+            <small id="directExpiry">Expires in ten minutes, or after first connection.</small>
+          </div>
+          <form id="directJoinForm" class="direct-form direct-join">
+            <label for="directJoinCode">CONNECT WITH A CODE</label>
+            <textarea id="directJoinCode" rows="2" placeholder="GHOST1.…" maxlength="1100" spellcheck="false" required></textarea>
+            <button type="submit" class="direct-action">CONNECT DIRECTLY</button>
+          </form>
+          <small class="direct-help">No central server. At least one peer must be reachable by TCP. Codes contain a decryptable IP; share privately. Existing connections stay unchanged.</small>
+        </section>
         <div class="section-title"><span>PEOPLE</span><span class="count" id="friendCount">0</span></div>
         <div id="friends" class="contact-list"><div class="empty-small">Your contacts will appear here.</div></div>
         <div class="section-title inbox-title"><span>INBOX</span><span class="count" id="inboxCount">0</span></div>

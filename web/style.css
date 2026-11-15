@@ -167,27 +167,21 @@ body{font-size:13px}
 }
 @media(prefers-reduced-motion:reduce){.ghost-art,.ghost-dart .ghost-art,.ghost-peek .ghost-art{animation:none!important}.message{animation:none}*,*::before,*::after{transition-duration:.01ms!important;scroll-behavior:auto!important}}
 
-/* Discovery has one compact action and a quiet list; no dashboard chrome. */
-.mesh-panel{margin:15px 5px 16px;padding:14px 12px 12px;border:1px solid #2e4542;border-radius:11px;background:#172123}
-.mesh-head{display:flex;align-items:center;justify-content:space-between;font-size:10px;font-weight:620;letter-spacing:1px;color:#b4c9c1}
-.mesh-list{margin:12px 0 8px;max-height:196px;overflow-y:auto;scrollbar-color:#354a43 transparent}
-.mesh-empty,.mesh-note{font-size:10px;color:#849c94;line-height:1.6}
-.mesh-note{margin:11px 0 0}
-.mesh-peer{padding:8px 0 9px;border-top:1px solid #2b3e3c}
-.mesh-peer:first-child{border-top:0}
-.mesh-peer-top{display:flex;align-items:center;gap:8px;color:#d4e6dd;font-size:11px}
-.mesh-peer-top strong{min-width:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;font-weight:530}
-.mesh-peer-top .node-state{margin-left:auto;white-space:nowrap;color:#80b6a5;font-size:9px}
-.mesh-peer-users{display:flex;flex-wrap:wrap;gap:5px;margin-top:7px}
-.mesh-peer-users button{background:#263b35;color:#c2dfd3;border:1px solid #3d5d50;border-radius:7px;padding:6px 8px;font-size:10px;cursor:pointer}
-.mesh-peer-users button:hover{background:#385247}
-.mesh-peer-users button:disabled{opacity:.5;cursor:default}
-.mesh-connect{margin-top:11px}
-.mesh-connect label{display:block;margin-bottom:8px;color:#a5bdb3;font-size:9px;font-weight:580;letter-spacing:.65px}
-.mesh-connect .inline-form{margin:0}
-.mesh-connect .inline-form input{min-width:0;font-size:11px}
-.mesh-connect .inline-form button{font-size:16px}
-
-.mesh-self{display:flex;align-items:center;gap:7px;margin-top:12px;padding:8px 9px;background:#101b1c;border:1px solid #283e39;border-radius:7px}
-.mesh-self code{min-width:0;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:10px ui-monospace,Consolas,monospace;color:#a5c5ba}
-.mesh-self button{border:0;background:none;color:#9fcbb9;font-size:9px;letter-spacing:.3px;cursor:pointer}
+/* Optional encrypted direct invite: compact, purposeful, no decorative gradients. */
+.direct-panel{margin:16px 1px 9px;padding:15px 12px;background:#152122;border:1px solid #30443e;border-radius:11px}
+.direct-title{display:flex;align-items:center;justify-content:space-between;gap:9px;color:#c0dacf;font-size:10px;font-weight:750;letter-spacing:.8px}
+.direct-state{color:#8cb9aa;font:10px ui-monospace,monospace;letter-spacing:0;white-space:nowrap}
+.direct-panel>p,.direct-help{display:block;margin:10px 0 14px;color:#899f97;font-size:10px;line-height:1.6}
+.direct-form{display:flex;flex-direction:column;gap:8px}
+.direct-form label,.direct-offer label{font-size:9px;font-weight:700;letter-spacing:.7px;color:#92b1a5}
+.direct-form input,.direct-form textarea,.direct-offer textarea{width:100%;min-width:0;box-sizing:border-box;background:#111b1e;border:1px solid #354c46;border-radius:7px;color:#d1e4dc;padding:10px 9px;font:11px ui-monospace,Consolas,monospace;resize:vertical}
+.direct-form textarea,.direct-offer textarea{overflow-wrap:anywhere;word-break:break-all}
+.direct-form input:focus-visible,.direct-form textarea:focus-visible,.direct-offer textarea:focus-visible{outline:2px solid #8cbfab;outline-offset:1px}
+.direct-row{display:flex;gap:9px;align-items:end}.direct-row>div{flex:1;min-width:0;display:flex;flex-direction:column;gap:8px}.direct-row input{width:100%}
+.direct-action,.direct-actions button{border:1px solid #4b7465;background:#274039;border-radius:7px;padding:11px 10px;color:#d1e9db;font-size:10px;font-weight:700;cursor:pointer;white-space:nowrap}
+.direct-action:hover,.direct-actions button:hover{background:#325448}.direct-action:disabled{opacity:.5;cursor:wait}
+.direct-offer{margin:12px 0 13px;display:flex;flex-direction:column;gap:7px}.direct-offer[hidden]{display:none}
+.direct-actions{display:flex;gap:7px}.direct-actions button{flex:1}.direct-actions button:last-child{background:#253034;border-color:#455451;color:#bbc8bf}
+.direct-offer small{color:#7e9e92;font-size:10px;line-height:1.5}.direct-join{padding-top:14px;border-top:1px solid #2a3e39}
+.direct-help{margin:12px 0 0}
+@media(prefers-reduced-motion:reduce){.direct-panel *{transition:none!important;animation:none!important}}

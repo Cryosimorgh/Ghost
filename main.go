@@ -691,6 +691,9 @@ func (h *Hub) routes() http.Handler {
 	if h.mesh != nil {
 		mux.HandleFunc("/api/peers", h.mesh.apiStatus)
 		mux.HandleFunc("/api/peers/connect", h.mesh.apiConnect)
+		mux.HandleFunc("/api/direct/invite", h.mesh.apiDirectInvite)
+		mux.HandleFunc("/api/direct/join", h.mesh.apiDirectJoin)
+		mux.HandleFunc("/api/direct/cancel", h.mesh.apiDirectCancel)
 	}
 	assets, _ := fs.Sub(webAssets, "web")
 	mux.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.FS(assets))))

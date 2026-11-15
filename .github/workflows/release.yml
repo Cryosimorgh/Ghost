@@ -57,9 +57,9 @@ jobs:
           cp dist/windows/Ghost.exe dist/Ghost-Windows-amd64.exe
           cp dist/linux/Ghost-linux-amd64 dist/Ghost-Linux-amd64
           chmod +x dist/Ghost-Linux-amd64
-          (cd dist/windows && zip -q ../Ghost-Windows-v1.3.0.zip *)
-          (cd dist/linux && zip -q ../Ghost-Linux-v1.3.0.zip *)
-          git archive --format=zip HEAD -o dist/Ghost-Source-v1.3.0.zip
+          (cd dist/windows && zip -q ../Ghost-Windows-v1.4.0.zip *)
+          (cd dist/linux && zip -q ../Ghost-Linux-v1.4.0.zip *)
+          git archive --format=zip HEAD -o dist/Ghost-Source-v1.4.0.zip
       - uses: actions/upload-artifact@v4
         with:
           name: desktop-packages
@@ -87,11 +87,11 @@ jobs:
       - name: Stage APK
         run: |
           mkdir -p dist
-          cp android/app/build/outputs/apk/debug/app-debug.apk dist/Ghost-Android-v1.3.0-preview.apk
+          cp android/app/build/outputs/apk/debug/app-debug.apk dist/Ghost-Android-v1.4.0-preview.apk
       - uses: actions/upload-artifact@v4
         with:
           name: android-package
-          path: dist/Ghost-Android-v1.3.0-preview.apk
+          path: dist/Ghost-Android-v1.4.0-preview.apk
           if-no-files-found: error
 
   release:
@@ -102,7 +102,7 @@ jobs:
         with:
           name: desktop-packages
           path: dist
-      - name: Publish v1.3.0 without overwriting existing releases
+      - name: Publish v1.4.0 without overwriting existing releases
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
@@ -110,11 +110,11 @@ jobs:
         run: |
           set -euo pipefail
           sha256sum dist/Ghost-* > dist/SHA256SUMS.txt
-          if gh release view v1.3.0 >/dev/null 2>&1; then
-            echo 'v1.3.0 already exists; existing release preserved.'
+          if gh release view v1.4.0 >/dev/null 2>&1; then
+            echo 'v1.4.0 already exists; existing release preserved.'
             exit 0
           fi
-          gh release create v1.3.0 dist/Ghost-* dist/SHA256SUMS.txt \
+          gh release create v1.4.0 dist/Ghost-* dist/SHA256SUMS.txt \
             --target "$GITHUB_SHA" \
-            --title 'Ghost v1.3.0 — Short-lived Rendezvous Directory' \
-            --notes 'Optional self-hosted Python rendezvous server: fixed 128-byte Ed25519 signed advertisements, 64-bit stable node codes, RAM-only 30-minute TTL, capped memory and rate limits, renewal/recovery. Ghost Windows/Linux clients can publish public peer addresses and connect by code; no shared Ghost hub, server-hosted messages, or file transfer. Local LAN discovery still works offline. Reachable peer port / NAT traversal still required. Android is not yet an independent mesh node; end-to-end WebRTC on physical devices remains unverified.'
+            --title 'Ghost v1.4.0 — One-Time Direct Connect' \
+            --notes 'Optional separate Direct Connect funnel: a 10-minute, one-use opaque invite code; an OS-selected ephemeral or explicitly forwarded pairing TCP port; X25519 + AES-GCM full-duplex signaling tunnel; listening port closes after one authenticated pairing. Existing LAN discovery, manual peer URLs, and optional Python rendezvous directory preserved. The invite is a bearer secret, not IP anonymity; recipients can decrypt the IP. At least one reachable port still required. WebRTC voice/data remains separate and physical-device media testing is unverified. Android preview is not a standalone mesh node.'

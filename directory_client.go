@@ -34,6 +34,14 @@ type directoryClient struct {
 	tlsConfig   *tls.Config // optional trusted test CA; never disables verification
 	dialer      *net.Dialer
 	diagnostics *networkDiagnostics
+	networkTime func(context.Context) (time.Time, error)
+}
+
+func (d *directoryClient) synchronizedTime(ctx context.Context) (time.Time, error) {
+	if d.networkTime != nil {
+		return d.networkTime(ctx)
+	}
+	return discoveryNetworkClock.currentTime(ctx)
 }
 
 func newDirectoryClient(host string, publishPort, lookupPort int, secure bool) (*directoryClient, error) {
@@ -75,15 +83,15 @@ func directoryMissing(err error) bool {
 	var e *directoryServerError
 	return errors.As(err, &e) && (e.reason == "not found" || e.reason == "expired")
 }
-func (d *directoryClient) begin(ctx context.Context, stage string) (context.Context, *networkTrace) {
+func (d *directoryClient) beginOperationTrace(ctx context.Context, stage string) (context.Context, *networkTrace) {
 	diag := d.diagnostics
 	if diag == nil {
 		diag = &networkDiagnostics{}
 	}
-	return diag.begin(ctx, stage)
+	return diag.beginAttemptTrace(ctx, stage)
 }
-func (d *directoryClient) do(ctx context.Context, request directoryRequest) (directoryReply, error) {
-	ctx, trace := d.begin(ctx, "directory."+request.Op)
+func (d *directoryClient) exchangeJSONLine(ctx context.Context, request directoryRequest) (directoryReply, error) {
+	ctx, trace := d.beginOperationTrace(ctx, "directory."+request.Op)
 	ctx, cancel := context.WithTimeout(ctx, 6*time.Second)
 	defer cancel()
 	var reply directoryReply
@@ -136,6 +144,12 @@ func (d *directoryClient) do(ctx context.Context, request directoryRequest) (dir
 			cfg.MinVersion = tls.VersionTLS12
 		}
 		cfg.InsecureSkipVerify = false
+		synchronized, err := d.synchronizedTime(ctx)
+		if err != nil {
+			return reply, trace.fail("directory.ntp", err)
+		}
+		anchored := time.Now()
+		cfg.Time = func() time.Time { return synchronized.Add(time.Since(anchored)) }
 		secureConn := tls.Client(raw, cfg)
 		trace.event("directory.tls", "start", "TLS handshake; verifying certificate for "+d.host)
 		if err := secureConn.HandshakeContext(ctx); err != nil {
@@ -204,8 +218,8 @@ func (d *directoryClient) do(ctx context.Context, request directoryRequest) (dir
 	trace.event("directory.json.read", "ok", fmt.Sprintf("op=%s; key matched; %d JSONL bytes (value omitted)", request.Op, len(line)))
 	return reply, nil
 }
-func directoryExpiry(reply directoryReply) (time.Time, error) {
-	if math.IsNaN(reply.Expires) || math.IsInf(reply.Expires, 0) || reply.Expires <= float64(time.Now().UnixNano())/1e9 || reply.Expires > float64(1<<63-1)/1e9 {
+func directoryExpiry(reply directoryReply, now time.Time) (time.Time, error) {
+	if math.IsNaN(reply.Expires) || math.IsInf(reply.Expires, 0) || reply.Expires <= float64(now.UnixNano())/1e9 || reply.Expires > float64(1<<63-1)/1e9 {
 		return time.Time{}, errors.New("server returned a missing or expired lease; check system clocks")
 	}
 	seconds, fraction := math.Modf(reply.Expires)
@@ -269,6 +283,9 @@ func packDirectoryRecord(private ed25519.PrivateKey, rawURL string, timestamp ui
 	return record, nil
 }
 func unpackDirectoryRecord(record [directoryRecordSize]byte, expectedID int64) (string, string, error) {
+	return unpackDirectoryRecordAt(record, expectedID, time.Now())
+}
+func unpackDirectoryRecordAt(record [directoryRecordSize]byte, expectedID int64, currentTime time.Time) (string, string, error) {
 	if record == ([directoryRecordSize]byte{}) {
 		return "", "", errors.New("directory ID not found or expired")
 	}
@@ -284,7 +301,7 @@ func unpackDirectoryRecord(record [directoryRecordSize]byte, expectedID int64) (
 	}
 	port := binary.BigEndian.Uint16(ep[2:4])
 	timestamp := int64(binary.BigEndian.Uint32(ep[4:8]))
-	now := time.Now().Unix()
+	now := currentTime.Unix()
 	if port == 0 || timestamp > now+300 || timestamp < now-1860 {
 		return "", "", errors.New("stale or invalid directory endpoint")
 	}
@@ -327,38 +344,50 @@ func allZero(p []byte) bool {
 	return true
 }
 func (d *directoryClient) publishWithLease(ctx context.Context, private ed25519.PrivateKey, advertise string) (int64, time.Time, error) {
-	ctx, trace := d.begin(ctx, "directory.publish")
-	record, err := packDirectoryRecord(private, advertise, uint32(time.Now().Unix()))
+	ctx, trace := d.beginOperationTrace(ctx, "directory.publish")
+	now, err := d.synchronizedTime(ctx)
+	if err != nil {
+		return 0, time.Time{}, trace.fail("directory.ntp", err)
+	}
+	record, err := packDirectoryRecord(private, advertise, uint32(now.Unix()))
 	if err != nil {
 		return 0, time.Time{}, trace.fail("directory.record", err)
 	}
 	id := directoryID(private.Public().(ed25519.PublicKey))
 	value := base64.RawURLEncoding.EncodeToString(record[:])
-	reply, err := d.do(ctx, directoryRequest{Op: "set", Key: directoryKey(id), Value: value})
+	reply, err := d.exchangeJSONLine(ctx, directoryRequest{Op: "set", Key: directoryKey(id), Value: value})
 	if err != nil {
 		return 0, time.Time{}, err
 	}
-	expiry, err := directoryExpiry(reply)
+	now, err = d.synchronizedTime(ctx)
+	if err != nil {
+		return 0, time.Time{}, trace.fail("directory.ntp", err)
+	}
+	expiry, err := directoryExpiry(reply, now)
 	if err != nil {
 		return 0, time.Time{}, trace.fail("directory.lease", err)
 	}
 	trace.event("directory.publish", "ok", fmt.Sprintf("Signed peer endpoint stored; code=%d; lease expires=%s", id, expiry.UTC().Format(time.RFC3339Nano)))
-	return id, expiry, nil
+	return id, time.Now().Add(expiry.Sub(now)), nil
 }
 func (d *directoryClient) publish(ctx context.Context, private ed25519.PrivateKey, advertise string) (int64, error) {
 	id, _, err := d.publishWithLease(ctx, private, advertise)
 	return id, err
 }
 func (d *directoryClient) resolveDetails(ctx context.Context, id int64) (string, string, uint32, error) {
-	ctx, trace := d.begin(ctx, "directory.lookup")
+	ctx, trace := d.beginOperationTrace(ctx, "directory.lookup")
 	if id <= 0 {
 		return "", "", 0, trace.fail("directory.lookup", errors.New("invalid directory code"))
 	}
-	reply, err := d.do(ctx, directoryRequest{Op: "get", Key: directoryKey(id)})
+	reply, err := d.exchangeJSONLine(ctx, directoryRequest{Op: "get", Key: directoryKey(id)})
 	if err != nil {
 		return "", "", 0, err
 	}
-	if _, err := directoryExpiry(reply); err != nil {
+	now, timeErr := d.synchronizedTime(ctx)
+	if timeErr != nil {
+		return "", "", 0, trace.fail("directory.ntp", timeErr)
+	}
+	if _, err := directoryExpiry(reply, now); err != nil {
 		return "", "", 0, trace.fail("directory.lease", err)
 	}
 	if reply.Value == nil {
@@ -370,7 +399,7 @@ func (d *directoryClient) resolveDetails(ctx context.Context, id int64) (string,
 	}
 	var record [directoryRecordSize]byte
 	copy(record[:], data)
-	endpoint, key, err := unpackDirectoryRecord(record, id)
+	endpoint, key, err := unpackDirectoryRecordAt(record, id, now)
 	if err != nil {
 		return "", "", 0, trace.fail("directory.verify", err)
 	}
@@ -412,15 +441,19 @@ func (m *Mesh) startDirectory(d *directoryClient, advertise string) {
 			case <-lifetime.Done():
 			}
 		}()
-		check := func() time.Duration {
+		refreshPublicationAndLease := func() time.Duration {
 			ctx, cancel := context.WithTimeout(lifetime, 15*time.Second)
 			defer cancel()
-			ctx, trace := d.begin(ctx, "directory.refresh")
+			ctx, trace := d.beginOperationTrace(ctx, "directory.refresh")
 			id, expiry, err := d.publishWithLease(ctx, m.private, advertise)
 			if err == nil {
 				endpoint, public, resolveErr := d.resolve(ctx, id)
-				record, packErr := packDirectoryRecord(m.private, advertise, uint32(time.Now().Unix()))
-				expected, _, unpackErr := unpackDirectoryRecord(record, id)
+				now, timeErr := d.synchronizedTime(ctx)
+				if timeErr != nil {
+					return 15 * time.Second
+				}
+				record, packErr := packDirectoryRecord(m.private, advertise, uint32(now.Unix()))
+				expected, _, unpackErr := unpackDirectoryRecordAt(record, id, now)
 				if resolveErr != nil {
 					err = resolveErr
 				} else if packErr != nil || unpackErr != nil || endpoint != expected || public != m.public {
@@ -445,12 +478,12 @@ func (m *Mesh) startDirectory(d *directoryClient, advertise string) {
 			trace.event("directory.refresh", "ok", fmt.Sprintf("Verified publication; refreshing lease in %s", delay.Round(time.Millisecond)))
 			return delay
 		}
-		timer := time.NewTimer(check())
+		timer := time.NewTimer(refreshPublicationAndLease())
 		defer timer.Stop()
 		for {
 			select {
 			case <-timer.C:
-				timer.Reset(check())
+				timer.Reset(refreshPublicationAndLease())
 			case <-m.stop:
 				return
 			}

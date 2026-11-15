@@ -121,6 +121,7 @@ func startJSONLServer(t *testing.T, secure bool, handle func(directoryRequest) [
 		mu.Unlock()
 		wg.Wait()
 	})
+	d.networkTime = func(context.Context) (time.Time, error) { return time.Now(), nil }
 	return d
 }
 
@@ -202,6 +203,7 @@ func startPythonDirectory(t *testing.T) (*directoryClient, func()) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		d.networkTime = func(context.Context) (time.Time, error) { return time.Now(), nil }
 		return d, stop
 	case <-time.After(8 * time.Second):
 		stop()
@@ -270,7 +272,7 @@ func TestDirectoryTLSNeverSendsPlaintext(t *testing.T) {
 	}()
 	p := l.Addr().(*net.TCPAddr).Port
 	d, _ := newDirectoryClient("127.0.0.1", p, p, true)
-	if _, err := d.do(context.Background(), directoryRequest{Op: "get", Key: "test"}); err == nil {
+	if _, err := d.exchangeJSONLine(context.Background(), directoryRequest{Op: "get", Key: "test"}); err == nil {
 		t.Fatal("non-TLS server accepted")
 	}
 	select {
@@ -292,7 +294,7 @@ func TestDirectoryTLSRejectsUntrustedCertificate(t *testing.T) {
 	called := make(chan bool, 1)
 	d := startJSONLServer(t, true, func(r directoryRequest) []byte { called <- true; return nil })
 	d.tlsConfig = nil // Use the default trust store; the fixture CA is not trusted.
-	_, err := d.do(context.Background(), directoryRequest{Op: "get", Key: "test"})
+	_, err := d.exchangeJSONLine(context.Background(), directoryRequest{Op: "get", Key: "test"})
 	if err == nil || !strings.Contains(err.Error(), "certificate") {
 		t.Fatalf("untrusted certificate accepted: %v", err)
 	}
@@ -402,7 +404,7 @@ func TestDirectoryCancellationDuringTLSAndRead(t *testing.T) {
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 			done := make(chan error, 1)
-			go func() { _, err := d.do(ctx, directoryRequest{Op: "get", Key: "test"}); done <- err }()
+			go func() { _, err := d.exchangeJSONLine(ctx, directoryRequest{Op: "get", Key: "test"}); done <- err }()
 			select {
 			case c := <-accepted:
 				defer c.Close()
@@ -427,7 +429,7 @@ func TestDiscoveryDNSFailureHasItsOwnStage(t *testing.T) {
 	d.dialer = &net.Dialer{Resolver: &net.Resolver{PreferGo: true, Dial: func(context.Context, string, string) (net.Conn, error) {
 		return nil, errors.New("simulated DNS failure")
 	}}}
-	_, err := d.do(context.Background(), directoryRequest{Op: "get", Key: "test"})
+	_, err := d.exchangeJSONLine(context.Background(), directoryRequest{Op: "get", Key: "test"})
 	if err == nil {
 		t.Fatal("DNS failure succeeded")
 	}
@@ -518,7 +520,7 @@ func TestLiveDiscoveryTLSGet(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = d.do(context.Background(), directoryRequest{Op: "get", Key: "ghost:probe:" + suffix})
+	_, err = d.exchangeJSONLine(context.Background(), directoryRequest{Op: "get", Key: "ghost:probe:" + suffix})
 	if err != nil && !directoryMissing(err) {
 		t.Fatal(err)
 	}

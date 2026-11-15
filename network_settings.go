@@ -252,7 +252,7 @@ func (s *settingsAPI) testDirectory(w http.ResponseWriter, r *http.Request, h *H
 	if !decodeBody(w, r, &cfg) {
 		return
 	}
-	ctx, trace := h.diagnostics.begin(r.Context(), "directory.test")
+	ctx, trace := h.diagnostics.beginAttemptTrace(r.Context(), "directory.test")
 	if cfg.Lookup == 0 {
 		cfg.Lookup = cfg.Publish
 	}
@@ -271,7 +271,7 @@ func (s *settingsAPI) testDirectory(w http.ResponseWriter, r *http.Request, h *H
 		http.Error(w, trace.fail("directory.probe", err).Error(), 500)
 		return
 	}
-	_, err = dir.do(ctx, directoryRequest{Op: "get", Key: "ghost:probe:" + probeID})
+	_, err = dir.exchangeJSONLine(ctx, directoryRequest{Op: "get", Key: "ghost:probe:" + probeID})
 	if err != nil && !directoryMissing(err) {
 		http.Error(w, "Discovery get failed: "+err.Error(), 502)
 		return
@@ -287,7 +287,7 @@ func (s *settingsAPI) testDirectory(w http.ResponseWriter, r *http.Request, h *H
 		defer func() {
 			cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
 			defer cancel()
-			if _, err := dir.do(cleanup, directoryRequest{Op: "delete", Key: directoryKey(id)}); err != nil {
+			if _, err := dir.exchangeJSONLine(cleanup, directoryRequest{Op: "delete", Key: directoryKey(id)}); err != nil {
 				trace.event("directory.probe.cleanup", "warning", "Temporary probe could not be removed; the server lease will expire it")
 			}
 		}()
@@ -297,8 +297,13 @@ func (s *settingsAPI) testDirectory(w http.ResponseWriter, r *http.Request, h *H
 			return
 		}
 		endpoint, key, err := dir.resolve(ctx, id)
-		record, packErr := packDirectoryRecord(private, strings.TrimSpace(cfg.Advertise), uint32(time.Now().Unix()))
-		expected, _, unpackErr := unpackDirectoryRecord(record, id)
+		now, timeErr := dir.synchronizedTime(ctx)
+		if timeErr != nil {
+			http.Error(w, timeErr.Error(), 502)
+			return
+		}
+		record, packErr := packDirectoryRecord(private, strings.TrimSpace(cfg.Advertise), uint32(now.Unix()))
+		expected, _, unpackErr := unpackDirectoryRecordAt(record, id, now)
 		if err != nil {
 			http.Error(w, "Discovery readback failed: "+err.Error(), 502)
 			return
@@ -327,6 +332,10 @@ func (s *settingsAPI) detectIP(w http.ResponseWriter, r *http.Request, h *Hub) {
 	}
 	transport := networkHTTPTransport()
 	defer transport.CloseIdleConnections()
+	if _, err := discoveryNetworkClock.currentTime(ctx); err != nil {
+		http.Error(w, err.Error(), 502)
+		return
+	}
 	client := &http.Client{Transport: transport, Timeout: 5 * time.Second}
 	res, err := client.Do(req)
 	if err != nil {

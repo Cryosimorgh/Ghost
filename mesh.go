@@ -161,7 +161,11 @@ func safePeerURL(raw string) (string, error) {
 	return u.Scheme + "://" + u.Host, nil
 }
 func (m *Mesh) signature(method, path string, body []byte) (ts, nonce, sig string, err error) {
-	ts = strconv.FormatInt(time.Now().Unix(), 10)
+	now, err := discoveryNetworkClock.currentTime(context.Background())
+	if err != nil {
+		return "", "", "", err
+	}
+	ts = strconv.FormatInt(now.Unix(), 10)
 	b := make([]byte, 16)
 	if _, err = rand.Read(b); err != nil {
 		return
@@ -189,7 +193,12 @@ func (m *Mesh) authenticatePeer(w http.ResponseWriter, r *http.Request) (string,
 	}
 	ts := r.Header.Get("X-Ghost-Time")
 	t, err := strconv.ParseInt(ts, 10, 64)
-	if err != nil || time.Since(time.Unix(t, 0)) > 5*time.Minute || time.Until(time.Unix(t, 0)) > 5*time.Minute {
+	networkUTC, timeErr := discoveryNetworkClock.currentTime(r.Context())
+	if timeErr != nil {
+		http.Error(w, "Network time synchronization unavailable", 503)
+		return "", nil, false
+	}
+	if err != nil || networkUTC.Sub(time.Unix(t, 0)) > 5*time.Minute || time.Unix(t, 0).Sub(networkUTC) > 5*time.Minute {
 		http.Error(w, "stale message", 401)
 		return "", nil, false
 	}
@@ -258,6 +267,9 @@ func (m *Mesh) post(ctx context.Context, peer *MeshPeer, path string, body any) 
 	return nil
 }
 func (m *Mesh) getHello(ctx context.Context, raw string) (MeshHello, error) {
+	if _, err := discoveryNetworkClock.currentTime(ctx); err != nil {
+		return MeshHello{}, err
+	}
 	addr, err := safePeerURL(raw)
 	if err != nil {
 		return MeshHello{}, err
@@ -374,7 +386,7 @@ func (m *Mesh) connect(ctx context.Context, raw string, introduce bool) error {
 	return m.connectPinned(ctx, raw, "", introduce)
 }
 func (m *Mesh) connectPinned(ctx context.Context, raw, expectedKey string, introduce bool) error {
-	ctx, trace := m.h.diagnostics.begin(ctx, "peer.connect")
+	ctx, trace := m.h.diagnostics.beginAttemptTrace(ctx, "peer.connect")
 	normalized, err := safePeerURL(raw)
 	if err != nil {
 		return trace.fail("peer.address", err)
@@ -645,7 +657,7 @@ func (m *Mesh) apiConnect(w http.ResponseWriter, r *http.Request) {
 	if !decodeBody(w, r, &q) {
 		return
 	}
-	ctx, trace := m.h.diagnostics.begin(r.Context(), "discovery.connect")
+	ctx, trace := m.h.diagnostics.beginAttemptTrace(r.Context(), "discovery.connect")
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 	address := strings.TrimSpace(q.Address)
@@ -677,7 +689,7 @@ func (m *Mesh) apiConnect(w http.ResponseWriter, r *http.Request) {
 	sendJSON(w, 200, map[string]any{"ok": true, "attempt": trace.id})
 }
 func (m *Mesh) sendSignal(ctx context.Context, peer *MeshPeer, from *Session, name, to, kind string, data json.RawMessage) error {
-	ctx, trace := m.h.diagnostics.begin(ctx, "peer.signal")
+	ctx, trace := m.h.diagnostics.beginAttemptTrace(ctx, "peer.signal")
 	trace.event("peer.signal", "start", "Sending signaling event (payload omitted)")
 	if err := m.post(ctx, peer, "/p2p/signal", map[string]any{"from": from.UserID, "fromCall": from.CallID, "to": to, "kind": kind, "data": data}); err != nil {
 		return trace.fail("peer.signal", err)
@@ -1184,7 +1196,7 @@ func (m *Mesh) pollLoop() {
 			for _, p := range ps {
 				ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
 				if err := m.pollOne(ctx, p.URL, p.Key); err != nil {
-					_, trace := m.h.diagnostics.begin(ctx, "peer.poll.retry")
+					_, trace := m.h.diagnostics.beginAttemptTrace(ctx, "peer.poll.retry")
 					_ = trace.fail("peer.poll.retry", err)
 				}
 				cancel()

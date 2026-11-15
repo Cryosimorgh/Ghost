@@ -7,6 +7,7 @@ import { spawn, execFileSync } from 'node:child_process';
 import { once } from 'node:events';
 import { createWriteStream, mkdtempSync, mkdirSync } from 'node:fs';
 import { createServer } from 'node:net';
+import { createSocket } from 'node:dgram';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { createInterface } from 'node:readline';
@@ -22,6 +23,7 @@ mkdirSync(evidence, { recursive: true });
 const python = process.env.GHOST_TEST_PYTHON || 'python';
 const children = [];
 let browser;
+let ntpFixture;
 
 async function freePort() {
   const server = createServer();
@@ -68,6 +70,16 @@ try {
   const [line] = await Promise.race([once(lines, 'line'), new Promise((_, reject) => setTimeout(() => reject(Error('Python directory did not start')), 10000).unref())]);
   lines.close();
   const discovery = JSON.parse(line);
+  ntpFixture=createSocket('udp4');
+  ntpFixture.on('message',(request,remote)=>{
+    if(request.length<48)return;
+    const reply=Buffer.alloc(48);reply[0]=0x24;reply[1]=2;request.copy(reply,24,40,48);
+    const seconds=Date.now()/1000+2208988800;
+    for(const offset of [32,40]){reply.writeUInt32BE(Math.floor(seconds)>>>0,offset);reply.writeUInt32BE(Math.floor((seconds%1)*2**32)>>>0,offset+4);}
+    ntpFixture.send(reply,remote.port,remote.address);
+  });
+  await new Promise(resolve=>ntpFixture.bind(0,'127.0.0.1',resolve));
+  const ntpAddress=`127.0.0.1:${ntpFixture.address().port}`;
   const urls = [];
   for (const name of ['alice', 'bob']) {
     const uiPort = await freePort(), peerPort = await freePort();
@@ -76,6 +88,7 @@ try {
     launch(binary, ['-data', path.join(work, `${name}-data.json`), '-listen', `127.0.0.1:${uiPort}`,
       '-peer-listen', `127.0.0.1:${peerPort}`, '-peer-advertise', `http://127.0.0.1:${peerPort}`,
       '-directory-host', discovery.host, '-directory-port', String(discovery.port), '-directory-tls=false',
+      '-ntp-server',ntpAddress,
       '-lan=false', '-stun=', '-turn-url=', '-open=false', '-tray=false'], name,
     { ...process.env, APPDATA: configDir, XDG_CONFIG_HOME: configDir });
     const url = `http://127.0.0.1:${uiPort}`;
@@ -196,4 +209,5 @@ try {
     await browser.close();
   }
   for (const child of children.reverse()) await stop(child);
+  if(ntpFixture)ntpFixture.close();
 }

@@ -23,7 +23,7 @@ func TestNetworkDiagnosticsAuthorizationBoundsAndRotation(t *testing.T) {
 	if err := os.WriteFile(path, bytes.Repeat([]byte("x"), 2*1024*1024), 0600); err != nil {
 		t.Fatal(err)
 	}
-	_, trace := h.diagnostics.begin(context.Background(), "test")
+	_, trace := h.diagnostics.beginAttemptTrace(context.Background(), "test")
 	trace.event("test", "ok", "rotation")
 	if _, err := os.Stat(path + ".1"); err != nil {
 		t.Fatal("log was not rotated", err)
@@ -75,7 +75,7 @@ func TestDiagnosticErrorsRedactRejectedURLCredentials(t *testing.T) {
 	if err := m.connectPinned(context.Background(), "http://review-user:review-secret@example.invalid:notaport", "", true); err == nil {
 		t.Fatal("expected URL validation error")
 	}
-	_, trace := h.diagnostics.begin(context.Background(), "test")
+	_, trace := h.diagnostics.beginAttemptTrace(context.Background(), "test")
 	trace.event("test", "error", "http://review-user:review-secret@example.invalid:80 and GHOST1.private-invite-code")
 	data, _ := json.Marshal(h.diagnostics.events)
 	disk, err := os.ReadFile(path)

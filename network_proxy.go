@@ -355,6 +355,12 @@ func socksConnect(conn net.Conn, address string) error {
 func networkHTTPTransport() *http.Transport {
 	t := http.DefaultTransport.(*http.Transport).Clone()
 	t.Proxy = nil
+	if t.TLSClientConfig == nil {
+		t.TLSClientConfig = &tls.Config{MinVersion: tls.VersionTLS12}
+	} else {
+		t.TLSClientConfig = t.TLSClientConfig.Clone()
+	}
+	t.TLSClientConfig.Time = discoveryNetworkClock.cachedTime
 	t.DialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
 		return dialNetwork(ctx, network, address, nil)
 	}

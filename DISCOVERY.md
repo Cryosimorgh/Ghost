@@ -69,3 +69,7 @@ GHOST_LIVE_DISCOVERY=1 go test -run '^TestLiveDiscoveryTLSGet$' -v -count=1
 ```
 
 The older binary server under `directory/` is retained as a historical protocol reference. The desktop client uses the JSONL service described here.
+
+## Public network time
+
+Ghost synchronizes application UTC with Cloudflare NTP at `time.cloudflare.com:123` (UDP), caches the anchor for ten minutes, and advances it with monotonic elapsed time. Discovery signatures, peer message timestamps, lease validation, and outgoing certificate validation use this clock. It does not change the Windows clock or silently fall back to it if NTP is unavailable. Lease refresh and I/O deadlines use monotonic timers. `-ntp-server host:port` can select another NTP service; browser tests use an isolated local NTP fixture.

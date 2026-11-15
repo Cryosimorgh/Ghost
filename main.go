@@ -766,6 +766,7 @@ func main() {
 	directoryPublishPort := flag.Int("directory-publish-port", cfg.DirectoryPublishPort, "deprecated alias; must match directory lookup port")
 	directoryLookupPort := flag.Int("directory-lookup-port", cfg.DirectoryLookupPort, "deprecated alias; must match directory publication port")
 	directoryTLS := flag.Bool("directory-tls", cfg.DirectoryTLS, "wrap discovery TCP in TLS with hostname/SNI and certificate verification")
+	ntpServer := flag.String("ntp-server", publicNTPServer, "public NTP host:port used for protocol timestamps and certificate validation")
 	data := flag.String("data", "ghost-data.json", "hub identity and friend mailbox database (not message history)")
 	cert := flag.String("tls-cert", "", "TLS certificate PEM (for remote mic access)")
 	key := flag.String("tls-key", "", "TLS private key PEM")
@@ -774,6 +775,8 @@ func main() {
 	turnUser := flag.String("turn-user", cfg.TURNUser, "TURN username")
 	turnPass := flag.String("turn-pass", cfg.TURNPass, "TURN credential")
 	flag.Parse()
+	discoveryNetworkClock.server = *ntpServer
+	discoveryNetworkClock.query = func(ctx context.Context) (time.Time, error) { return queryNTPTime(ctx, *ntpServer) }
 	flag.Visit(func(f *flag.Flag) {
 		if f.Name == "directory-port" {
 			*directoryPublishPort, *directoryLookupPort = *directoryPort, *directoryPort

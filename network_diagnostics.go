@@ -49,7 +49,7 @@ func redactNetworkDetail(detail string) string {
 	return diagnosticInvite.ReplaceAllString(detail, "[redacted invite]")
 }
 
-func (d *networkDiagnostics) begin(ctx context.Context, stage string) (context.Context, *networkTrace) {
+func (d *networkDiagnostics) beginAttemptTrace(ctx context.Context, stage string) (context.Context, *networkTrace) {
 	if trace, ok := ctx.Value(networkTraceKey{}).(*networkTrace); ok {
 		return ctx, trace
 	}
@@ -75,7 +75,11 @@ func (t *networkTrace) event(stage, status, detail string) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.sequence++
-	e := networkEvent{d.sequence, time.Now().UTC().Format(time.RFC3339Nano), t.id, stage, status, detail, time.Since(t.start).Milliseconds()}
+	stamp := "NTP not synchronized"
+	if networkUTC := discoveryNetworkClock.cachedTime(); !networkUTC.IsZero() {
+		stamp = networkUTC.UTC().Format(time.RFC3339Nano)
+	}
+	e := networkEvent{d.sequence, stamp, t.id, stage, status, detail, time.Since(t.start).Milliseconds()}
 	if len(d.events) == 500 {
 		copy(d.events, d.events[1:])
 		d.events = d.events[:499]
@@ -156,7 +160,7 @@ func (h *Hub) networkLogs(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Invalid network event", 400)
 			return
 		}
-		_, trace := h.diagnostics.begin(r.Context(), "browser")
+		_, trace := h.diagnostics.beginAttemptTrace(r.Context(), "browser")
 		status := "ok"
 		if input.State == "failed" || input.State == "error" {
 			status = "error"

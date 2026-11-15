@@ -13,6 +13,8 @@ This connection uses **TCP → verified TLS → newline-delimited JSON**. It sen
 
 The address label `/v/api/ghost` is accepted in the settings field and removed before dialing. The TCP destination and TLS SNI remain `www.soulless.ai` on port `443`.
 
+Discovery and outgoing peer HTTP connections respect the Windows manual proxy and HTTP(S) proxy environment settings. Untyped Windows mixed proxies are detected as SOCKS5 when supported; SOCKS5 resolves remote hostnames through the proxy. Loopback and private LAN connections stay direct. Proxy negotiation does not change the discovery JSONL protocol or certificate checks.
+
 The local browser interface and the separate peer signaling listener have their own transports. The directory TLS setting controls the discovery socket only.
 
 ## Service contract
@@ -38,13 +40,15 @@ The stored value is an unpadded base64url encoding of Ghost's signed 128-byte en
 
 Ghost writes its advertisement with `set`, reads it back with `get`, then refreshes the lease at half the server-reported remaining TTL, with a maximum interval of three minutes. This keeps short leases alive. Refresh failure is logged and retried after 15 seconds.
 
-**Test directory connection** uses `get` with a random probe key. `not found` is a valid service response. With a public peer URL, the test additionally publishes the local node's signed advertisement and verifies its readback. It does not send an invalid binary advertisement, a ping, or an HTTP request.
+**Test directory connection** uses `get` with a random probe key. `not found` is a valid service response. With a public peer URL, the test additionally publishes a signed advertisement under a temporary identity, verifies its readback, and deletes the temporary entry. The live node advertisement is unchanged. It does not send an invalid binary advertisement, a ping, or an HTTP request.
 
 Set a reachable **Public peer URL**, save/restart, and share the directory code. The other node resolves it and connects directly to the peer. Discovery carries no signaling, messages, files, or media. Reachable peer signaling and WebRTC connectivity are checked separately.
 
 ## Diagnostics and tests
 
 **Settings → Connection diagnostics** shows destination host/port, transport, TLS/SNI/certificate verification, JSONL operation and framing, server errors, advertisement verification, peer handshake, signaling, ICE, and data-channel states. JSON values, credentials, SDP, candidate payloads, message bodies, and file bytes are omitted.
+
+A listener replying with an HTTP status instead of JSONL is reported as a protocol mismatch after successful TLS, rather than a certificate or connection failure.
 
 The log is copyable and also saved as `<data-file>.network.log`, rotating at 2 MiB with one backup. The panel shows the actual log path.
 

@@ -316,6 +316,7 @@ func TestDirectoryJSONLFailures(t *testing.T) {
 		{"expired", "expired", func(r directoryRequest) []byte { return jsonLine(map[string]any{"ok": false, "error": "expired"}) }},
 		{"rate", "rate limit", func(r directoryRequest) []byte { return jsonLine(map[string]any{"ok": false, "error": "rate limit"}) }},
 		{"bad-json", "directory.json.decode", func(r directoryRequest) []byte { return []byte("not json\n") }},
+		{"http-listener", "returned HTTP 400 instead of JSONL", func(r directoryRequest) []byte { return []byte("HTTP/1.1 400 Bad Request\r\n\r\n") }},
 		{"no-ok", "directory.json.decode", func(r directoryRequest) []byte { return []byte("{}\n") }},
 		{"partial-line", "directory.json.read", func(r directoryRequest) []byte { return []byte("{\"ok\":true}") }},
 		{"oversize", "4096-byte", func(r directoryRequest) []byte { return append(bytes.Repeat([]byte("x"), 4097), '\n') }},

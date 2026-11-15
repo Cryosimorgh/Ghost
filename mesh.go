@@ -51,27 +51,30 @@ type MeshQueued struct {
 	Signature string          `json:"signature"`
 }
 type MeshPeer struct {
-	URL      string       `json:"url"`
-	Key      string       `json:"key"`
-	LastSeen time.Time    `json:"lastSeen"`
-	LastPoll time.Time    `json:"-"`
-	Pending  []MeshQueued `json:"-"`
-	Users    []MeshUser   `json:"users"`
+	URL                 string       `json:"url"`
+	Key                 string       `json:"key"`
+	LastSeen            time.Time    `json:"lastSeen"`
+	LastPoll            time.Time    `json:"-"`
+	LastDirectoryLookup time.Time    `json:"-"`
+	Pending             []MeshQueued `json:"-"`
+	Users               []MeshUser   `json:"users"`
 }
 type Mesh struct {
-	h        *Hub
-	private  ed25519.PrivateKey
-	public   string
-	listener net.Listener
-	http     *http.Server
-	url      string
-	port     int
-	mu       sync.RWMutex
-	peers    map[string]*MeshPeer // keyed by peer public key
-	nonces   map[string]time.Time
-	acks     map[string]map[string]bool
-	client   *http.Client
-	stop     chan struct{}
+	h             *Hub
+	private       ed25519.PrivateKey
+	public        string
+	listener      net.Listener
+	http          *http.Server
+	url           string
+	port          int
+	mu            sync.RWMutex
+	peers         map[string]*MeshPeer // keyed by peer public key
+	nonces        map[string]time.Time
+	acks          map[string]map[string]bool
+	client        *http.Client
+	directory     *directoryClient
+	directoryCode int64
+	stop          chan struct{}
 }
 
 func meshKey(path string) (ed25519.PrivateKey, error) {
@@ -360,6 +363,9 @@ func (m *Mesh) addPeer(url string, hello MeshHello) error {
 	return nil
 }
 func (m *Mesh) connect(ctx context.Context, raw string, introduce bool) error {
+	return m.connectPinned(ctx, raw, "", introduce)
+}
+func (m *Mesh) connectPinned(ctx context.Context, raw, expectedKey string, introduce bool) error {
 	normalized, err := safePeerURL(raw)
 	if err != nil {
 		return err
@@ -367,6 +373,9 @@ func (m *Mesh) connect(ctx context.Context, raw string, introduce bool) error {
 	hello, err := m.getHello(ctx, normalized)
 	if err != nil {
 		return err
+	}
+	if expectedKey != "" && hello.Key != expectedKey {
+		return errors.New("peer key does not match signed directory advertisement")
 	}
 	if err = m.addPeer(normalized, hello); err != nil {
 		return err
@@ -595,7 +604,10 @@ func (m *Mesh) apiStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	m.mu.RUnlock()
 	sort.Slice(out, func(i, j int) bool { return out[i].URL < out[j].URL })
-	sendJSON(w, 200, map[string]any{"peers": out, "nodeKey": m.public, "address": m.url, "addresses": m.addresses(), "discovery": "LAN multicast + manual direct address"})
+	m.mu.RLock()
+	code, enabled := m.directoryCode, m.directory != nil
+	m.mu.RUnlock()
+	sendJSON(w, 200, map[string]any{"peers": out, "nodeKey": m.public, "address": m.url, "addresses": m.addresses(), "directoryCode": code, "directoryEnabled": enabled, "discovery": "LAN multicast + optional short-lived rendezvous directory"})
 }
 func (m *Mesh) apiConnect(w http.ResponseWriter, r *http.Request) {
 	if !method(w, r, "POST") {
@@ -612,7 +624,29 @@ func (m *Mesh) apiConnect(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 7*time.Second)
 	defer cancel()
-	if err := m.connect(ctx, q.Address, true); err != nil {
+	address := strings.TrimSpace(q.Address)
+	expected := ""
+	if len(address) <= 19 && len(address) > 0 && strings.IndexFunc(address, func(r rune) bool { return r < '0' || r > '9' }) == -1 {
+		id, err := strconv.ParseInt(address, 10, 64)
+		if err != nil || id <= 0 {
+			http.Error(w, "invalid directory code", 400)
+			return
+		}
+		m.mu.RLock()
+		d := m.directory
+		m.mu.RUnlock()
+		if d == nil {
+			http.Error(w, "configure -directory-host to resolve codes", 400)
+			return
+		}
+		var errResolve error
+		address, expected, errResolve = d.resolve(ctx, id)
+		if errResolve != nil {
+			http.Error(w, errResolve.Error(), 400)
+			return
+		}
+	}
+	if err := m.connectPinned(ctx, address, expected, true); err != nil {
 		http.Error(w, err.Error(), 400)
 		return
 	}
@@ -624,21 +658,43 @@ func (m *Mesh) sendSignal(ctx context.Context, peer *MeshPeer, from *Session, na
 func (m *Mesh) refresh(ctx context.Context) {
 	m.mu.RLock()
 	list := make([]MeshPeer, 0, len(m.peers))
+	d := m.directory
 	for _, p := range m.peers {
 		list = append(list, *p)
 	}
 	m.mu.RUnlock()
 	for _, p := range list {
-		if p.URL == "" {
+		reachable := false
+		if p.URL != "" {
+			ctx2, cancel := context.WithTimeout(ctx, 4*time.Second)
+			hello, err := m.getHello(ctx2, p.URL)
+			cancel()
+			if err == nil && hello.Key == p.Key {
+				_ = m.addPeer(p.URL, hello)
+				reachable = true
+			}
+		}
+		if reachable || d == nil || time.Since(p.LastDirectoryLookup) < time.Minute {
 			continue
 		}
-		ctx2, cancel := context.WithTimeout(ctx, 4*time.Second)
-		hello, err := m.getHello(ctx2, p.URL)
+		m.mu.Lock()
+		if current := m.peers[p.Key]; current != nil {
+			current.LastDirectoryLookup = time.Now()
+		}
+		m.mu.Unlock()
+		pub, err := base64.RawURLEncoding.DecodeString(p.Key)
+		if err != nil || len(pub) != ed25519.PublicKeySize {
+			continue
+		}
+		ctx2, cancel := context.WithTimeout(ctx, 6*time.Second)
+		address, key, err := d.resolve(ctx2, directoryID(ed25519.PublicKey(pub)))
+		if err == nil && key == p.Key {
+			// Keep the peer identity pinned even when its address changes.
+			if err = m.connectPinned(ctx2, address, key, true); err == nil {
+				m.persistPeer(key, address)
+			}
+		}
 		cancel()
-		if err != nil || hello.Key != p.Key {
-			continue
-		}
-		_ = m.addPeer(p.URL, hello)
 	}
 }
 func (m *Mesh) start(addr, advertise, cert, key string, discover bool) error {

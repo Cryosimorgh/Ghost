@@ -806,6 +806,8 @@ async function refreshMesh() {
     const state = await api('/api/peers');
     const items = state.peers || [];
     $('meshCount').textContent = String(items.filter(p=>p.online).length);
+    $('directoryRow').hidden = !state.directoryEnabled;
+    $('directoryCode').textContent = state.directoryCode ? String(state.directoryCode) : 'Not advertised · set peer-advertise';
     $('meshSelf').textContent = (state.addresses || []).find(a => !a.includes('127.0.0.1')) || state.address || 'Unknown address';
     const target = $('meshPeers'); target.replaceChildren();
     if (!items.length) { target.append(node('div', 'mesh-empty', 'Searching LAN · or enter a peer address')); return; }
@@ -837,6 +839,7 @@ async function refreshMesh() {
 }
 async function wirePeerDiscovery() {
   $('copyMeshSelf').addEventListener('click', () => copy($('meshSelf').textContent));
+  $('copyDirectoryCode').addEventListener('click', () => { const code = $('directoryCode').textContent; if (/^[0-9]+$/.test(code)) copy(code); });
   $('meshConnectForm').addEventListener('submit', async e => {
     e.preventDefault(); const input = $('meshAddress'); const address = input.value.trim(); if (!address) return;
     try { await api('/api/peers/connect',{ method:'POST',body:{address} }); input.value=''; await refreshMesh(); await refreshFriends(); toast('Peer found. You can add their Mail ID.'); }

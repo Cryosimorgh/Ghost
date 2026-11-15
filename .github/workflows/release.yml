@@ -21,6 +21,19 @@ jobs:
         with:
           go-version-file: go.mod
       - run: go test ./...
+      - run: go test -race ./...
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Verify Python rendezvous protocol
+        run: |
+          python3 -m pip install --quiet -r directory/requirements.txt
+          python3 -m unittest discover -s directory -p 'test_*.py'
+          python3 directory/ghost_directory.py --bind 127.0.0.1 --publish-port 48591 --lookup-port 48592 --max-memory-mb 1 &
+          pid=$!
+          trap 'kill "$pid" 2>/dev/null || true' EXIT
+          sleep 0.5
+          GHOST_DIR_PUBLISH_PORT=48591 GHOST_DIR_LOOKUP_PORT=48592 go test -run TestPythonDirectoryAcrossIndependentNodes -v
       - run: node --check web/app.js
       - name: Generate Windows icon resource
         run: |
@@ -44,9 +57,9 @@ jobs:
           cp dist/windows/Ghost.exe dist/Ghost-Windows-amd64.exe
           cp dist/linux/Ghost-linux-amd64 dist/Ghost-Linux-amd64
           chmod +x dist/Ghost-Linux-amd64
-          (cd dist/windows && zip -q ../Ghost-Windows-v1.2.0.zip *)
-          (cd dist/linux && zip -q ../Ghost-Linux-v1.2.0.zip *)
-          git archive --format=zip HEAD -o dist/Ghost-Source-v1.2.0.zip
+          (cd dist/windows && zip -q ../Ghost-Windows-v1.3.0.zip *)
+          (cd dist/linux && zip -q ../Ghost-Linux-v1.3.0.zip *)
+          git archive --format=zip HEAD -o dist/Ghost-Source-v1.3.0.zip
       - uses: actions/upload-artifact@v4
         with:
           name: desktop-packages
@@ -74,11 +87,11 @@ jobs:
       - name: Stage APK
         run: |
           mkdir -p dist
-          cp android/app/build/outputs/apk/debug/app-debug.apk dist/Ghost-Android-v1.2.0-preview.apk
+          cp android/app/build/outputs/apk/debug/app-debug.apk dist/Ghost-Android-v1.3.0-preview.apk
       - uses: actions/upload-artifact@v4
         with:
           name: android-package
-          path: dist/Ghost-Android-v1.2.0-preview.apk
+          path: dist/Ghost-Android-v1.3.0-preview.apk
           if-no-files-found: error
 
   release:
@@ -89,7 +102,7 @@ jobs:
         with:
           name: desktop-packages
           path: dist
-      - name: Publish v1.2.0 without overwriting existing releases
+      - name: Publish v1.3.0 without overwriting existing releases
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
@@ -97,11 +110,11 @@ jobs:
         run: |
           set -euo pipefail
           sha256sum dist/Ghost-* > dist/SHA256SUMS.txt
-          if gh release view v1.2.0 >/dev/null 2>&1; then
-            echo 'v1.2.0 already exists; existing release preserved.'
+          if gh release view v1.3.0 >/dev/null 2>&1; then
+            echo 'v1.3.0 already exists; existing release preserved.'
             exit 0
           fi
-          gh release create v1.2.0 dist/Ghost-* dist/SHA256SUMS.txt \
+          gh release create v1.3.0 dist/Ghost-* dist/SHA256SUMS.txt \
             --target "$GITHUB_SHA" \
-            --title 'Ghost v1.2.0 — Independent P2P nodes' \
-            --notes 'Independent Ghost nodes: no shared hub needed. Automatic LAN multicast discovery; manually entered peer addresses for remote networks; signed Ed25519 node signaling; cross-node friend requests, presence and WebRTC call setup. Windows/Linux are standalone Go executables. No public STUN server by default. A direct route/port forwarding is necessary for internet peers; no global DHT or automatic NAT traversal. Android v1.1 is not yet a standalone node. Live browser-to-browser WebRTC remains unverified.'
+            --title 'Ghost v1.3.0 — Short-lived Rendezvous Directory' \
+            --notes 'Optional self-hosted Python rendezvous server: fixed 128-byte Ed25519 signed advertisements, 64-bit stable node codes, RAM-only 30-minute TTL, capped memory and rate limits, renewal/recovery. Ghost Windows/Linux clients can publish public peer addresses and connect by code; no shared Ghost hub, server-hosted messages, or file transfer. Local LAN discovery still works offline. Reachable peer port / NAT traversal still required. Android is not yet an independent mesh node; end-to-end WebRTC on physical devices remains unverified.'

@@ -35,12 +35,13 @@
         <section class="mesh-panel" aria-label="Peer discovery">
           <div class="mesh-head"><span>NEARBY NODES</span><span id="meshCount" class="count">0</span></div>
           <div class="mesh-self"><code id="meshSelf">Finding local address…</code><button type="button" id="copyMeshSelf" title="Copy address to share with a LAN friend">COPY</button></div>
+          <div class="mesh-self" id="directoryRow" hidden><code id="directoryCode">Not advertised</code><button type="button" id="copyDirectoryCode" title="Copy your shareable directory code">COPY</button></div>
           <div id="meshPeers" class="mesh-list"><div class="mesh-empty">Searching your network…</div></div>
           <form id="meshConnectForm" class="mesh-connect">
-            <label for="meshAddress">DIRECT PEER ADDRESS</label>
-            <div class="inline-form"><input id="meshAddress" type="text" placeholder="192.168.1.42:8788" autocomplete="off" spellcheck="false" required aria-label="Peer IP or HTTPS address"><button type="submit" title="Add direct peer">↗</button></div>
+            <label for="meshAddress">PEER ADDRESS OR DIRECTORY CODE</label>
+            <div class="inline-form"><input id="meshAddress" type="text" placeholder="https://peer:8788 or 64-bit code" autocomplete="off" spellcheck="false" required aria-label="Peer IP, HTTPS address, or directory code"><button type="submit" title="Add direct peer">↗</button></div>
           </form>
-          <p class="mesh-note">No directory server. LAN nodes appear automatically; remote nodes need a reachable address.</p>
+          <p class="mesh-note">LAN nodes appear automatically. Optional self-hosted directory resolves temporary public addresses by code.</p>
         </section>
         <div class="section-title"><span>PEOPLE</span><span class="count" id="friendCount">0</span></div>
         <div id="friends" class="contact-list"><div class="empty-small">Your contacts will appear here.</div></div>

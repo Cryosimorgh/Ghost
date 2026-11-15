@@ -4,15 +4,15 @@
 
 Ghost is a lightweight Go desktop application with a local web UI, an animated ghost, contacts, WebRTC calls, messages, and local history. **Each desktop instance runs its own node**; two users do not have to connect to the same hub.
 
-[**Windows EXE**](https://github.com/Cryosimorgh/Ghost/releases/download/v1.2.0/Ghost-Windows-amd64.exe) · [**Linux binary**](https://github.com/Cryosimorgh/Ghost/releases/download/v1.2.0/Ghost-Linux-amd64) · [**Releases**](https://github.com/Cryosimorgh/Ghost/releases) · [**Issues**](https://github.com/Cryosimorgh/Ghost/issues)
+[**Windows EXE**](https://github.com/Cryosimorgh/Ghost/releases/download/v1.3.0/Ghost-Windows-amd64.exe) · [**Linux binary**](https://github.com/Cryosimorgh/Ghost/releases/download/v1.3.0/Ghost-Linux-amd64) · [**Releases**](https://github.com/Cryosimorgh/Ghost/releases) · [**Issues**](https://github.com/Cryosimorgh/Ghost/issues)
 
-> **Scope of v1.2.0:** Server-free LAN discovery and direct-address internet connectivity are implemented and covered by two-node signaling integration tests. **There is no automatic global internet directory or DHT yet**, and NAT/firewall restrictions can prevent direct connections. The Android v1.1 preview is still a WebView client of a reachable desktop node, **not a fully standalone decentralized Android node**. Live two-browser WebRTC media/data transfer has not yet been independently verified.
+> **Scope of v1.3.0:** Automatic LAN discovery and **optional self-hosted, RAM-only Python rendezvous directory** for finding other Ghost nodes by a stable 64-bit code. There is no global account search, public server run by Ghost, NAT relay, or guaranteed cross-NAT connectivity. The directory is *not* the shared Ghost signaling hub from early releases. The Android v1.1 preview is still a WebView client of a reachable desktop node, **not a fully standalone decentralized Android node**. Live two-browser WebRTC media/data transfer has not yet been independently verified.
 
 ## Quick start
 
-**Windows (x64):** download [Ghost-Windows-amd64.exe](https://github.com/Cryosimorgh/Ghost/releases/download/v1.2.0/Ghost-Windows-amd64.exe), run it, and allow local-network access through Windows Firewall when prompted. Ghost runs in the notification tray and opens your browser automatically.
+**Windows (x64):** download [Ghost-Windows-amd64.exe](https://github.com/Cryosimorgh/Ghost/releases/download/v1.3.0/Ghost-Windows-amd64.exe), run it, and allow local-network access through Windows Firewall when prompted. Ghost runs in the notification tray and opens your browser automatically.
 
-**Linux (x86-64):** download [Ghost-Linux-amd64](https://github.com/Cryosimorgh/Ghost/releases/download/v1.2.0/Ghost-Linux-amd64):
+**Linux (x86-64):** download [Ghost-Linux-amd64](https://github.com/Cryosimorgh/Ghost/releases/download/v1.3.0/Ghost-Linux-amd64):
 
 ```bash
 chmod +x Ghost-Linux-amd64
@@ -30,9 +30,28 @@ Both are single Go executables with the UI embedded. **No Java, Node, npm, Go in
 
 If multicast is blocked, copy **your node address** from the Nearby nodes panel and have your friend paste it into **Direct peer address**. Use `http://192.168.x.y:8788` or the actual address shown. A successful connection exchanges each node's public key and online user information and is saved for reconnection.
 
+### Find a remote peer by directory code (v1.3)
+
+Host your own short-lived Python directory (two TCP ports, 128-byte signed ads, 30-minute expiry; **no chat/file storage**) using [directory setup](directory/README.md). Each client chooses whether to opt in; there is no built-in public server address.
+
+```bash
+# Run on your own VPS (after pip install -r directory/requirements.txt):
+python directory/ghost_directory.py --bind 0.0.0.0 --max-memory-mb 16
+
+# On a desktop with a publicly reachable peer listener:
+./Ghost-Linux-amd64 -directory-host your.directory.example \
+  -peer-advertise http://198.51.100.40:8788
+```
+
+For public deployment, use `--tls-cert ... --tls-key ...` on the **directory** and `-directory-tls=true` on Ghost; configure peer TLS separately with `-peer-tls-cert`/`-peer-tls-key` and a matching `https://` peer address.
+
+**Share the 64-bit code shown under Nearby nodes**. Your friend enters it in **PEER ADDRESS OR DIRECTORY CODE**. Ghost validates the signed advertisement and the contacted peer's identity before saving the connection. It will automatically look up known peers again when saved addresses become unreachable. The publisher checks the directory every 3 minutes and re-advertises when needed; records expire 30 minutes after the last successful publication.
+
+The directory only helps peers **find publicly reachable node addresses**. One side must have an inbound reachable node (or there must be additional NAT traversal infrastructure). **Two CGNAT-bound computers may still fail**. Directory lookup is neither STUN nor a TURN relay.
+
 ### Connect across the internet
 
-There is deliberately **no Ghost-run server, account directory, or TURN relay**. To find each other across networks, exchange a reachable address **out of band** and enter it under **Direct peer address**. Nodes pin the peer's public key when first reached. The receiving node must have a port forwarded or a public address; only **one node must accept inbound peer signaling**. The other can maintain a signed, outbound polling connection and receive friend requests, acceptances, and call signals through it. With both nodes behind restrictive NATs or CGNAT, the initial connection may still be impossible without a reachable third peer or infrastructure. WebRTC media traversal is a separate concern.
+There is **no Ghost-run public server or TURN relay**. You can share a reachable peer address manually, or optionally host a tiny rendezvous directory and share a 64-bit code. Nodes pin the peer's public key when first reached. The receiving node must have a port forwarded or a public address; only **one node must accept inbound peer signaling**. The other can maintain a signed, outbound polling connection and receive friend requests, acceptances, and call signals through it. With both nodes behind restrictive NATs or CGNAT, the initial connection may still be impossible without a reachable third peer or infrastructure. WebRTC media traversal is a separate concern.
 
 For a reachable host with a TLS certificate, run e.g.:
 
@@ -60,7 +79,7 @@ Ghost A desktop                          Ghost B desktop
               (only after user acceptance)
 ```
 
-- **Discovery:** UDP multicast on the LAN; saved node addresses or manually entered direct URLs for other networks. There is no DHT/global directory in this release.
+- **Discovery:** UDP multicast on the LAN; saved node addresses or manually entered direct URLs for other networks. There is no DHT or default public directory; private/self-hosted directory lookup is optional.
 - **Signaling:** direct node-to-node HTTP(S) requests, signed with persistent Ed25519 **node keys**, with freshness checks and replay prevention. A peer's node key is retained across restarts in `ghost-data.json.nodekey` (private, do not share it).
 - **Friends:** each node owns its local identities/inbox and stores a pinned remote-node key for a remote contact. Friend requests and acceptances travel directly between online nodes, not through SMTP or a common hub.
 - **Calling:** each browser session gets a temporary Call ID. Ghost finds that ID on a known live peer node and sends WebRTC offers, answers, and ICE candidates directly. Browser-to-browser voice/messages/files use WebRTC rather than the peer signaling connection.
@@ -90,7 +109,10 @@ The UI has desktop and mobile-responsive layouts, reduced-motion support, and a 
 ```text
 -listen          Local browser UI address (default 127.0.0.1:8787)
 -peer-listen     LAN/internet peer signaling listener (default 0.0.0.0:8788)
--peer-advertise  Public reachable URL for your peer listener (optional)
+-peer-advertise  Public reachable URL for your peer listener (required to publish)
+-directory-host    Optional self-hosted Python directory hostname
+-directory-publish-port / -directory-lookup-port  Directory TCP ports (47801/47802)
+-directory-tls     Verify TLS on directory sockets (default false; recommended publicly)
 -peers           Enable direct peer mesh (default true)
 -lan             Enable automatic LAN multicast discovery (default true)
 -stun            Optional comma-separated STUN URLs (empty by default)
@@ -114,6 +136,6 @@ GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o Ghost-Linux-amd64 .
 GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -ldflags='-H=windowsgui' -o Ghost-Windows-amd64.exe .
 ```
 
-`mesh_test.go` runs **two independent Go nodes with separate identity databases** and verifies mutual peer discovery by URL, cross-node friend requests/acceptance, online Call IDs, signaling in both directions, signed-message replay prevention, and node-key persistence. Optional real multicast test: `GHOST_TEST_LAN=1 go test -run TestLANMulticastDiscovery -v` (requires working multicast interface). Live WebRTC browser tests remain unverified in the existing sandbox.
+`directory/test_directory.py` verifies the signed, 128-byte, 30-minute, RAM-only TCP protocol. `directory_client_test.go` verifies Ghost client encoding and two independent nodes using a live Python directory. `mesh_test.go` runs **two independent Go nodes with separate identity databases** and verifies mutual peer discovery by URL, cross-node friend requests/acceptance, online Call IDs, signaling in both directions, signed-message replay prevention, and node-key persistence. Optional real multicast test: `GHOST_TEST_LAN=1 go test -run TestLANMulticastDiscovery -v` (requires working multicast interface). Live WebRTC browser tests remain unverified in the existing sandbox.
 
 [Source](https://github.com/Cryosimorgh/Ghost) · [Releases](https://github.com/Cryosimorgh/Ghost/releases) · [Bug reports](https://github.com/Cryosimorgh/Ghost/issues)

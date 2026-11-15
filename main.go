@@ -737,6 +737,10 @@ func main() {
 	peerKey := flag.String("peer-tls-key", "", "TLS private key for direct peer listener only")
 	meshEnabled := flag.Bool("peers", true, "enable direct node-to-node discovery and signaling")
 	lan := flag.Bool("lan", true, "enable multicast LAN peer discovery")
+	directoryHost := flag.String("directory-host", "", "optional rendezvous directory host (your own Python server); empty disables")
+	directoryPublishPort := flag.Int("directory-publish-port", 47801, "directory publication TCP port")
+	directoryLookupPort := flag.Int("directory-lookup-port", 47802, "directory lookup TCP port")
+	directoryTLS := flag.Bool("directory-tls", false, "use trusted TLS for both directory sockets")
 	data := flag.String("data", "ghost-data.json", "hub identity and friend mailbox database (not message history)")
 	cert := flag.String("tls-cert", "", "TLS certificate PEM (for remote mic access)")
 	key := flag.String("tls-key", "", "TLS private key PEM")
@@ -774,6 +778,20 @@ func main() {
 		}
 		defer mesh.close()
 		go mesh.restorePeers()
+		if *directoryHost != "" {
+			directory, derr := newDirectoryClient(*directoryHost, *directoryPublishPort, *directoryLookupPort, *directoryTLS)
+			if derr != nil {
+				log.Fatal(derr)
+			}
+			if *advertise == "" {
+				log.Print("directory configured without -peer-advertise: lookup only; not publishing a loopback address")
+			}
+			if *advertise == "" {
+				mesh.startDirectory(directory, "")
+			} else {
+				mesh.startDirectory(directory, mesh.url)
+			}
+		}
 		log.Printf("Ghost peer listener at %s (node key %s...)", mesh.url, mesh.public[:12])
 	}
 	srv := &http.Server{Addr: *listen, Handler: h.routes(), ReadHeaderTimeout: 8 * time.Second, IdleTimeout: 90 * time.Second, MaxHeaderBytes: 1 << 20, BaseContext: func(net.Listener) context.Context { return context.Background() }}

@@ -1,7 +1,0 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title">
-  <title id="title">Ghost</title>
-  <rect width="512" height="512" rx="112" fill="#121E24"/>
-  <path d="M150 330V221c0-66 47-110 106-110s106 44 106 110v109c0 18-21 28-35 17l-30-24-27 23c-9 8-20 8-29 0l-27-23-30 24c-14 11-34 1-34-17Z" fill="#A9E1D4"/>
-  <rect x="212" y="226" width="16" height="30" rx="8" fill="#121E24"/>
-  <rect x="284" y="226" width="16" height="30" rx="8" fill="#121E24"/>
-</svg>

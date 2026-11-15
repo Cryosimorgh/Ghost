@@ -2,13 +2,17 @@ package main
 
 import (
 	"context"
+	"crypto/ed25519"
+	"crypto/rand"
 	"crypto/tls"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -38,7 +42,7 @@ type NetworkSettings struct {
 }
 
 func defaultNetworkSettings() NetworkSettings {
-	return NetworkSettings{DirectoryPublishPort: 47801, DirectoryLookupPort: 47802, PeerListen: "0.0.0.0:8788", LAN: true}
+	return NetworkSettings{DirectoryPublishPort: 443, DirectoryLookupPort: 443, DirectoryTLS: true, PeerListen: "0.0.0.0:8788", LAN: true}
 }
 
 func loadNetworkSettings(path string) (NetworkSettings, error) {
@@ -55,6 +59,21 @@ func loadNetworkSettings(path string) (NetworkSettings, error) {
 	if err = dec.Decode(&cfg); err != nil {
 		return cfg, fmt.Errorf("invalid network settings: %w", err)
 	}
+	// Migrate saved URL-style configuration into a TCP hostname so an old
+	// settings file cannot prevent the UI from starting to correct its port.
+	if strings.Contains(cfg.DirectoryHost, "://") {
+		raw := cfg.DirectoryHost
+		if !strings.Contains(raw, "://") {
+			raw = "https://" + raw
+		}
+		if u, err := url.Parse(raw); err == nil && u.Hostname() != "" && u.User == nil && u.RawQuery == "" && u.Fragment == "" {
+			cfg.DirectoryHost = u.Hostname()
+			if (u.Hostname() == "soulless.ai" || u.Hostname() == "www.soulless.ai") && strings.TrimRight(u.Path, "/") == "/v/api/ghost" {
+				cfg.DirectoryHost = "www.soulless.ai"
+			}
+		}
+	}
+	cfg.DirectoryLookupPort = cfg.DirectoryPublishPort
 	if err = cfg.validate(); err != nil {
 		return cfg, err
 	}
@@ -64,12 +83,12 @@ func loadNetworkSettings(path string) (NetworkSettings, error) {
 func (cfg NetworkSettings) validate() error {
 	cfg.DirectoryHost = strings.TrimSpace(cfg.DirectoryHost)
 	if cfg.DirectoryHost != "" {
-		if strings.ContainsAny(cfg.DirectoryHost, "/:\\@?# \t\n") || len(cfg.DirectoryHost) > 253 {
-			return errors.New("directory host must be a DNS name or IPv4 address without protocol or port")
+		if _, err := newDirectoryClient(cfg.DirectoryHost, cfg.DirectoryPublishPort, cfg.DirectoryLookupPort, cfg.DirectoryTLS); err != nil {
+			return err
 		}
 	}
-	if cfg.DirectoryPublishPort < 1 || cfg.DirectoryPublishPort > 65535 || cfg.DirectoryLookupPort < 1 || cfg.DirectoryLookupPort > 65535 || cfg.DirectoryPublishPort == cfg.DirectoryLookupPort {
-		return errors.New("directory ports must be valid, distinct TCP ports")
+	if cfg.DirectoryPublishPort < 1 || cfg.DirectoryPublishPort > 65535 || cfg.DirectoryLookupPort < 1 || cfg.DirectoryLookupPort > 65535 {
+		return errors.New("directory ports must be 1–65535")
 	}
 	host, port, err := net.SplitHostPort(cfg.PeerListen)
 	if err != nil || host == "" || port == "" {
@@ -224,29 +243,74 @@ func (s *settingsAPI) testDirectory(w http.ResponseWriter, r *http.Request, h *H
 		return
 	}
 	var cfg struct {
-		Host    string `json:"host"`
-		TLS     bool   `json:"tls"`
-		Publish int    `json:"publish"`
-		Lookup  int    `json:"lookup"`
+		Host      string `json:"host"`
+		TLS       bool   `json:"tls"`
+		Publish   int    `json:"publish"`
+		Lookup    int    `json:"lookup"`
+		Advertise string `json:"advertise"`
 	}
 	if !decodeBody(w, r, &cfg) {
 		return
 	}
+	ctx, trace := h.diagnostics.begin(r.Context(), "directory.test")
+	if cfg.Lookup == 0 {
+		cfg.Lookup = cfg.Publish
+	}
+	trace.event("directory.config", "start", "Validating discovery endpoint")
 	dir, err := newDirectoryClient(cfg.Host, cfg.Publish, cfg.Lookup, cfg.TLS)
 	if err != nil {
+		_ = trace.fail("directory.config", err)
 		http.Error(w, err.Error(), 400)
 		return
 	}
-	// A lookup of invalid code 0 verifies the listener responds with 128 bytes.
-	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	dir.diagnostics = h.diagnostics
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
-	reply := make([]byte, 128)
-	req := make([]byte, 8)
-	if err = dir.exchange(ctx, dir.lookupPort, req, reply); err != nil {
-		http.Error(w, "Lookup port unreachable: "+err.Error(), 502)
+	probeID, err := randomID(26)
+	if err != nil {
+		http.Error(w, trace.fail("directory.probe", err).Error(), 500)
 		return
 	}
-	sendJSON(w, 200, map[string]any{"reachable": true, "message": "Directory lookup port responded; publication requires an advertised public peer URL."})
+	_, err = dir.do(ctx, directoryRequest{Op: "get", Key: "ghost:probe:" + probeID})
+	if err != nil && !directoryMissing(err) {
+		http.Error(w, "Discovery get failed: "+err.Error(), 502)
+		return
+	}
+	message := "TCP/TLS connection and JSONL get verified. Set a public peer URL to test signed publication and readback."
+	if cfg.Advertise != "" && h.mesh != nil {
+		public, private, err := ed25519.GenerateKey(rand.Reader)
+		if err != nil {
+			http.Error(w, trace.fail("directory.probe", err).Error(), 500)
+			return
+		}
+		id := directoryID(public)
+		defer func() {
+			cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
+			defer cancel()
+			if _, err := dir.do(cleanup, directoryRequest{Op: "delete", Key: directoryKey(id)}); err != nil {
+				trace.event("directory.probe.cleanup", "warning", "Temporary probe could not be removed; the server lease will expire it")
+			}
+		}()
+		_, err = dir.publish(ctx, private, strings.TrimSpace(cfg.Advertise))
+		if err != nil {
+			http.Error(w, "Discovery set failed: "+err.Error(), 502)
+			return
+		}
+		endpoint, key, err := dir.resolve(ctx, id)
+		record, packErr := packDirectoryRecord(private, strings.TrimSpace(cfg.Advertise), uint32(time.Now().Unix()))
+		expected, _, unpackErr := unpackDirectoryRecord(record, id)
+		if err != nil {
+			http.Error(w, "Discovery readback failed: "+err.Error(), 502)
+			return
+		}
+		if packErr != nil || unpackErr != nil || endpoint != expected || key != base64.RawURLEncoding.EncodeToString(public) {
+			http.Error(w, trace.fail("directory.readback", errors.New("signed peer advertisement readback does not match this node")).Error(), 502)
+			return
+		}
+		message = "Signed publication and lookup verified using JSONL set/get over TCP. Connect with the directory code to verify the remote peer path."
+	}
+	trace.event("directory.test", "ok", message)
+	sendJSON(w, 200, map[string]any{"reachable": true, "message": message, "attempt": trace.id})
 }
 
 func (s *settingsAPI) detectIP(w http.ResponseWriter, r *http.Request, h *Hub) {
@@ -261,7 +325,9 @@ func (s *settingsAPI) detectIP(w http.ResponseWriter, r *http.Request, h *Hub) {
 		http.Error(w, err.Error(), 502)
 		return
 	}
-	client := &http.Client{Timeout: 5 * time.Second}
+	transport := networkHTTPTransport()
+	defer transport.CloseIdleConnections()
+	client := &http.Client{Transport: transport, Timeout: 5 * time.Second}
 	res, err := client.Do(req)
 	if err != nil {
 		http.Error(w, "Public-IP detection failed: "+err.Error(), 502)

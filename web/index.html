@@ -103,13 +103,12 @@
         <form id="networkSettingsForm" class="network-settings-form">
           <div class="settings-block">
             <div class="settings-block-heading"><div><h2>Directory</h2><p>Optional short-lived discovery. The directory does not carry messages or files.</p></div><span id="directoryLiveStatus" class="status-chip">Not connected</span></div>
-            <label class="field wide" for="cfgDirectoryHost">Directory host<input id="cfgDirectoryHost" name="directoryHost" autocomplete="off" placeholder="example.com or 203.0.113.10"></label>
-            <div class="field-pair">
-              <label class="field" for="cfgDirectoryPublishPort">Publish port<input id="cfgDirectoryPublishPort" name="directoryPublishPort" type="number" min="1" max="65535" required value="47801"></label>
-              <label class="field" for="cfgDirectoryLookupPort">Lookup port<input id="cfgDirectoryLookupPort" name="directoryLookupPort" type="number" min="1" max="65535" required value="47802"></label>
-            </div>
-            <label class="setting-switch"><input type="checkbox" id="cfgDirectoryTLS" name="directoryTLS"><span>Use TLS to contact the directory</span></label>
+            <label class="field wide" for="cfgDirectoryHost">Discovery server address<input id="cfgDirectoryHost" name="directoryHost" autocomplete="off" placeholder="www.soulless.ai/v/api/ghost"></label>
+            <p class="small-note">Discovery connects to the hostname over TCP/TLS. The /v/api/ghost address label is accepted; no HTTP path is sent.</p>
+            <label class="field" for="cfgDirectoryPublishPort">Discovery TCP port<input id="cfgDirectoryPublishPort" name="directoryPublishPort" type="number" min="1" max="65535" required value="443"></label>
+            <label class="setting-switch"><input type="checkbox" id="cfgDirectoryTLS" name="directoryTLS" checked><span>Use TLS and verify the discovery server certificate</span></label>
             <button id="testDirectory" type="button" class="quiet-action">Test directory connection</button>
+            <p id="directoryTestStatus" class="small-note" role="status" aria-live="polite"></p>
           </div>
           <div class="settings-block">
             <div class="settings-block-heading"><div><h2>Your peer address</h2><p>Where other Ghost nodes connect. Keep port 8788 unless you need to forward a different port.</p></div></div>
@@ -136,6 +135,12 @@
             </details>
           </div>
           <div class="settings-save"><p id="networkSettingsStatus" role="status" aria-live="polite">Changes restart the local Ghost networking node. Active calls will disconnect.</p><button type="submit" class="button primary" id="saveNetworkSettings">Save and restart Ghost</button></div>
+          <div class="settings-block network-diagnostics">
+            <div class="settings-block-heading"><div><h2>Connection diagnostics</h2><p>Discovery, peer handshake, signaling, and WebRTC states. Updates while Settings is open.</p></div></div>
+            <div class="diagnostic-actions"><button id="refreshNetworkLogs" type="button" class="quiet-action">Refresh logs</button><button id="copyNetworkLogs" type="button" class="quiet-action">Copy logs</button></div>
+            <p id="networkLogFile" class="small-note"></p>
+            <pre id="networkLogOutput" tabindex="0" aria-label="Connection diagnostic logs">No connection attempts recorded yet.</pre>
+          </div>
         </form>
       </section>
     </main>

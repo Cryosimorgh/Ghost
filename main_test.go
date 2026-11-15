@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -85,7 +86,7 @@ func TestRegistrationAndFriendMailbox(t *testing.T) {
 			t.Fatalf("expected mutual friendship: %v", state)
 		}
 	}
-	if fi, err := os.Stat(path); err != nil || fi.Mode().Perm()&0077 != 0 {
+	if fi, err := os.Stat(path); err != nil || (runtime.GOOS != "windows" && fi.Mode().Perm()&0077 != 0) {
 		t.Fatalf("state permissions: %v %v", fi, err)
 	}
 	saved := newHub(path)

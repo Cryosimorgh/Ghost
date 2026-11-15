@@ -497,8 +497,9 @@ async function startPeer(msg, initiator) {
   const connection = pc;
   setSelected(peer.id, peer.name);
   connection.onicecandidate = ({ candidate }) => { if (candidate && peer && mySerial === activeCallSerial) sendSignal(peer.callId, 'ice', candidate.toJSON()).catch(console.warn); };
-  connection.oniceconnectionstatechange = updateState;
+  connection.oniceconnectionstatechange = () => { logNetworkState('webrtc.ice', connection.iceConnectionState); updateState(); };
   connection.onconnectionstatechange = () => {
+    logNetworkState('webrtc.connection', connection.connectionState);
     updateState();
     if (connection.connectionState === 'failed' && connection === pc) { toast('Peer link failed. A TURN relay may be required.', true); disconnect(true); }
   };
@@ -522,9 +523,9 @@ async function startPeer(msg, initiator) {
 }
 function bindControl(channel) {
   control = channel;
-  channel.onopen = () => { toast(`Connected directly to ${peer?.name || 'peer'}`); updateState(); renderHistory(); };
-  channel.onclose = () => { updateState(); if (pc) toast('Data channel closed'); };
-  channel.onerror = () => updateState();
+  channel.onopen = () => { logNetworkState('webrtc.data', 'open'); toast(`Connected directly to ${peer?.name || 'peer'}`); updateState(); renderHistory(); };
+  channel.onclose = () => { logNetworkState('webrtc.data', 'closed'); updateState(); if (pc) toast('Data channel closed'); };
+  channel.onerror = () => { logNetworkState('webrtc.data', 'error'); updateState(); };
   channel.onmessage = async ({ data }) => {
     if (typeof data !== 'string' || data.length > 65536) return;
     try { await onControl(JSON.parse(data)); } catch (e) { console.error('P2P message:', e); toast('Could not process peer message', true); }
@@ -815,7 +816,7 @@ async function refreshMesh() {
     }
     $('directoryRow').hidden = !state.directoryEnabled;
     const live = $('directoryLiveStatus');
-    if (live) { live.textContent = !state.directoryEnabled ? 'Disabled' : state.directoryCode ? 'Published' : 'Lookup only / waiting'; live.classList.toggle('is-live', Boolean(state.directoryCode)); }
+    if (live) { live.textContent = !state.directoryEnabled ? 'Disabled' : state.directoryStatus || (state.directoryCode ? 'Published' : 'Lookup only'); live.title = state.directoryError || ''; live.classList.toggle('is-live', Boolean(state.directoryCode)); }
     $('directoryCode').textContent = state.directoryCode ? String(state.directoryCode) : 'Not advertised · set peer-advertise';
     $('meshSelf').textContent = (state.addresses || []).find(a => !a.includes('127.0.0.1')) || state.address || 'Unknown address';
     const target = $('meshPeers'); target.replaceChildren();
@@ -968,7 +969,7 @@ function setView(view) {
     button.classList.toggle('active', active);
     button.setAttribute('aria-current', active ? 'page' : 'false');
   });
-  if (view === 'settings') refreshNetworkSettings().catch(e => toast(e.message, true));
+  if (view === 'settings') { refreshNetworkSettings().catch(e => toast(e.message, true)); refreshNetworkLogs(); }
   if (view === 'audio') requestAnimationFrame(updateMicDisplay);
 }
 function wireNavigation() {
@@ -979,13 +980,37 @@ function wireNavigation() {
 }
 const settingsFields = [
   ['directoryHost','cfgDirectoryHost'],['directoryPublishPort','cfgDirectoryPublishPort'],
-  ['directoryLookupPort','cfgDirectoryLookupPort'],['directoryTLS','cfgDirectoryTLS'],
+  ['directoryTLS','cfgDirectoryTLS'],
   ['peerListen','cfgPeerListen'],['peerAdvertise','cfgPeerAdvertise'],
   ['peerTLSCert','cfgPeerTLSCert'],['peerTLSKey','cfgPeerTLSKey'],
   ['lan','cfgLAN'],['stun','cfgSTUN'],['turnURL','cfgTURNURL'],
   ['turnUser','cfgTURNUser'],['turnPass','cfgTURNPass']
 ];
 let settingsRefreshPending = false;
+let networkLogsPending = false;
+let networkLogsText = '';
+async function refreshNetworkLogs() {
+  if (!identity || networkLogsPending) return;
+  networkLogsPending = true;
+  try {
+    const data = await api('/api/network/logs');
+    networkLogsText = data.events.map(e => `${e.time} #${e.attempt} +${e.elapsedMs}ms [${e.status.toUpperCase()}] ${e.stage}: ${e.detail}`).join('\n');
+    const output = $('networkLogOutput');
+    const next = networkLogsText || 'No connection attempts recorded yet.';
+    if (output.textContent !== next) {
+      const follow = output.scrollTop + output.clientHeight >= output.scrollHeight - 24;
+      const position = output.scrollTop;
+      output.textContent = next;
+      output.scrollTop = follow ? output.scrollHeight : position;
+    }
+    $('networkLogFile').textContent = data.file ? `Saved on this computer: ${data.file} (rotates at 2 MiB)` : 'Recent connection attempts on this node.';
+  } catch (error) { $('networkLogOutput').textContent = `Could not load diagnostics: ${error.message}`; }
+  finally { networkLogsPending = false; }
+}
+function logNetworkState(stage, state) {
+  console.info(`[Ghost network] ${stage}: ${state}`);
+  if (identity) api('/api/network/logs', {method:'POST',body:{stage,state}}).catch(error => console.warn('Network diagnostics unavailable:', error.message));
+}
 async function refreshNetworkSettings() {
   if (!identity || settingsRefreshPending) return;
   settingsRefreshPending = true;
@@ -1006,12 +1031,18 @@ function networkSettingsPayload() {
     output[key] = input.type === 'checkbox' ? input.checked :
       input.type === 'number' ? Number(input.value) : input.value.trim();
   }
+  // Preserve the saved configuration schema while using one stream port.
+  output.directoryLookupPort = output.directoryPublishPort;
   return output;
 }
 function wireSettings() {
   const form = $('networkSettingsForm');
   const save = $('saveNetworkSettings');
   const status = $('networkSettingsStatus');
+  $('refreshNetworkLogs').addEventListener('click', refreshNetworkLogs);
+  $('copyNetworkLogs').addEventListener('click', async () => { await refreshNetworkLogs(); copy(networkLogsText || 'No connection attempts recorded yet.'); });
+  setInterval(() => { if (document.querySelector('.app')?.dataset.view === 'settings') refreshNetworkLogs(); }, 2000);
+  const directoryStatus = $('directoryTestStatus');
   form.addEventListener('submit', async e => {
     e.preventDefault(); save.disabled = true;
     try {
@@ -1029,13 +1060,14 @@ function wireSettings() {
   });
   $('testDirectory').addEventListener('click', async e => {
     const button = e.currentTarget; button.disabled = true;
+    directoryStatus.textContent = 'Testing discovery lookup and publication…';
     try {
       const state = networkSettingsPayload();
       if (!state.directoryHost) throw Error('Enter a directory host first.');
-      const r = await api('/api/settings/test-directory', {method:'POST',body:{host:state.directoryHost,tls:state.directoryTLS,publish:state.directoryPublishPort,lookup:state.directoryLookupPort}});
-      status.textContent = r.message; toast('Directory lookup port is reachable.');
-    } catch(err) { status.textContent = err.message; toast(err.message, true); }
-    finally {button.disabled=false;}
+      const r = await api('/api/settings/test-directory', {method:'POST',body:{host:state.directoryHost,tls:state.directoryTLS,publish:state.directoryPublishPort,lookup:state.directoryLookupPort,advertise:state.peerAdvertise}});
+      directoryStatus.textContent = r.message; toast('Discovery checks passed.');
+    } catch(err) { directoryStatus.textContent = err.message; toast(err.message, true); }
+    finally {button.disabled=false; await refreshNetworkLogs();}
   });
   $('findPublicIP').addEventListener('click', async e => {
     if (!window.confirm('Detecting your public IP contacts api.ipify.org once. Continue?')) return;

@@ -10,11 +10,31 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
+	"strconv"
 	"testing"
 	"time"
 )
 
 func TestIndependentGhostNodesRouteFriendsAndSignals(t *testing.T) {
+	runIndependentGhostNodesRouteFriendsAndSignals(t, nil)
+}
+
+func TestPythonJSONLDiscoveryRoutesFriendsAndSignals(t *testing.T) {
+	d, stop := startPythonDirectory(t)
+	runIndependentGhostNodesRouteFriendsAndSignals(t, func(ms [2]*Mesh) string {
+		ms[0].directory = d
+		id, err := d.publish(context.Background(), ms[1].private, ms[1].url)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return strconv.FormatInt(id, 10)
+	}, stop)
+	stop()
+}
+
+func runIndependentGhostNodesRouteFriendsAndSignals(t *testing.T, discover func([2]*Mesh) string, afterConnect ...func()) {
+	t.Helper()
 	var hs [2]*Hub
 	var ms [2]*Mesh
 	var ss [2]*httptest.Server
@@ -50,7 +70,14 @@ func TestIndependentGhostNodesRouteFriendsAndSignals(t *testing.T) {
 	if aCall == bCall {
 		t.Fatal("unexpected call ID collision")
 	}
-	testAPI(t, ss[0], "POST", "/api/peers/connect", id[0], map[string]string{"address": ms[1].url}, 200)
+	address := ms[1].url
+	if discover != nil {
+		address = discover(ms)
+	}
+	testAPI(t, ss[0], "POST", "/api/peers/connect", id[0], map[string]string{"address": address}, 200)
+	for _, done := range afterConnect {
+		done()
+	}
 	for i := 0; i < 2; i++ {
 		if ms[i].peer(ms[1-i].public) == nil {
 			t.Fatalf("node %d did not discover its reciprocal peer", i)
@@ -115,7 +142,7 @@ func TestMeshSignatureReplayAndKeyPersistence(t *testing.T) {
 	if err != nil || !bytes.Equal(k, k2) {
 		t.Fatal("node key not persistent")
 	}
-	if f, err := os.Stat(path); err != nil || f.Mode().Perm()&0077 != 0 {
+	if f, err := os.Stat(path); err != nil || (runtime.GOOS != "windows" && f.Mode().Perm()&0077 != 0) {
 		t.Fatalf("insecure node key: %v %v", f, err)
 	}
 	h := newHub(filepath.Join(t.TempDir(), "hub.json"))

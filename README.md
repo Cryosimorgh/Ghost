@@ -13,7 +13,7 @@ Ghost is a lightweight Go desktop application with a local web UI, an animated g
 **You do not need PowerShell or startup flags for normal setup.**
 
 1. Open Ghost and choose **Settings** in the left navigation (or bottom navigation on a narrow screen).
-2. Under **Directory**, enter the Python server's IP / hostname. The default ports are **47801** (publish) and **47802** (lookup). Turn on TLS if your server has a trusted certificate. Click **Test directory connection** to check lookup connectivity.
+2. Under **Directory**, enter **www.soulless.ai/v/api/ghost**, port **443**, with **TLS checked**. Ghost connects to `www.soulless.ai` and sends newline-delimited JSON over TLS. The address label is accepted without sending an HTTP path. See [discovery setup](DISCOVERY.md).
 3. Under **Your peer address**, keep the listener at `0.0.0.0:8788`. Enter your publicly reachable endpoint, e.g. `http://203.0.113.25:8788`, or choose **Detect IP** (an explicit, one-time query to api.ipify.org). You must still forward TCP 8788 on your router if behind NAT. TLS for the peer listener is separate and accepts paths to a certificate and key.
 4. **Save and restart Ghost.** The settings are stored privately in the user config folder (`%AppData%\Ghost\network.json` on Windows, `~/.config/Ghost/network.json` on typical Linux systems), and Ghost restarts the local node automatically. Active calls disconnect during restart. Future launches reuse the settings.
 5. Open **Connect**. Your short directory code appears when publication succeeds. Share that code privately; your friend enters it in the peer address/code field. They only need the directory hostname configured to resolve your code (and their own endpoint need not be publicly reachable to initiate signaling).
@@ -63,20 +63,17 @@ If multicast is blocked, copy **your node address** from the Nearby nodes panel 
 
 ### Find a remote peer by directory code (v1.3)
 
-Host your own short-lived Python directory (two TCP ports, 128-byte signed ads, 30-minute expiry; **no chat/file storage**) using [directory setup](directory/README.md). Each client chooses whether to opt in; there is no built-in public server address.
+Configure the existing JSONL key/value rendezvous service using [discovery setup](DISCOVERY.md). Ghost connects by TCP, verifies TLS using the hostname for SNI, then sends newline-terminated JSON `set`/`get` requests. Both operations use the same stream port. There is no HTTP layer, URL path, or ping.
 
 ```bash
-# Run on your own VPS (after pip install -r directory/requirements.txt):
-python directory/ghost_directory.py --bind 0.0.0.0 --max-memory-mb 16
-
 # On a desktop with a publicly reachable peer listener:
-./Ghost-Linux-amd64 -directory-host your.directory.example \
+./Ghost-Linux-amd64 -directory-host www.soulless.ai -directory-port 443 -directory-tls=true \
   -peer-advertise http://198.51.100.40:8788
 ```
 
-For public deployment, use `--tls-cert ... --tls-key ...` on the **directory** and `-directory-tls=true` on Ghost; configure peer TLS separately with `-peer-tls-cert`/`-peer-tls-key` and a matching `https://` peer address.
+The deployed TCP stream proxy terminates TLS using its public certificate. Ghost uses the system trust store and verifies the configured hostname. Peer listener TLS remains separately configured with `-peer-tls-cert`/`-peer-tls-key` and a matching public peer address.
 
-**Share the 64-bit code shown under Nearby nodes**. Your friend enters it in **PEER ADDRESS OR DIRECTORY CODE**. Ghost validates the signed advertisement and the contacted peer's identity before saving the connection. It will automatically look up known peers again when saved addresses become unreachable. The publisher checks the directory every 3 minutes and re-advertises when needed; records expire 30 minutes after the last successful publication.
+**Share the 64-bit code shown under Nearby nodes**. Your friend enters it in **PEER ADDRESS OR DIRECTORY CODE**. Ghost gets the opaque signed advertisement under `ghost:v1:<code>`, validates it, then verifies the contacted peer's identity. The publisher refreshes with `set` at half the remaining server lease, capped at three minutes; reads do not refresh the lease.
 
 The directory only helps peers **find publicly reachable node addresses**. One side must have an inbound reachable node (or there must be additional NAT traversal infrastructure). **Two CGNAT-bound computers may still fail**. Directory lookup is neither STUN nor a TURN relay.
 
@@ -141,9 +138,9 @@ The UI has desktop and mobile-responsive layouts, reduced-motion support, and a 
 -listen          Local browser UI address (default 127.0.0.1:8787)
 -peer-listen     LAN/internet peer signaling listener (default 0.0.0.0:8788)
 -peer-advertise  Public reachable URL for your peer listener (required to publish)
--directory-host    Optional self-hosted Python directory hostname
--directory-publish-port / -directory-lookup-port  Directory TCP ports (47801/47802)
--directory-tls     Verify TLS on directory sockets (default false; recommended publicly)
+-directory-host    JSONL discovery TCP hostname/IP; host/v/api/ghost label also accepted
+-directory-port    One discovery stream port for set/get (default 443)
+-directory-tls     Verify TLS/SNI on the discovery socket (default true)
 -peers           Enable direct peer mesh (default true)
 -lan             Enable automatic LAN multicast discovery (default true)
 -stun            Optional comma-separated STUN URLs (empty by default)
@@ -159,6 +156,10 @@ The UI has desktop and mobile-responsive layouts, reduced-motion support, and a 
 
 Go 1.23+ is required to **build from source**, not to run a release binary:
 
+The main discovery flow has automated cross-language integration tests against the documented JSONL contract. Set `GHOST_TEST_PYTHON` to a Python executable when running Go tests to require the integration instead of allowing it to skip. Run `python -m unittest discover -s tests -p 'test_*.py' -v` for the opaque-store contract. Linux and Windows run checks in `.github/workflows/test.yml`.
+
+For real browser coverage, install Playwright (`npm install --no-save playwright`, then `npx playwright install chromium`) and run `node tests/discovery-browser.mjs`. It builds Ghost into a temporary directory, launches a real Python directory and two independent local nodes, and checks discovery, diagnostics/copy, mobile layout, identity verification, friend acceptance, WebRTC messages in both directions, audio tracks, and byte-verified file transfer. It stops discovery before calling/transferring to verify direct P2P independence. Artifacts and process logs stay outside the repository. `GHOST_PLAYWRIGHT_MODULE` and `GHOST_BROWSER_EXECUTABLE` can point at existing installations.
+
 ```bash
 go test ./...
 go test -race ./...
@@ -167,6 +168,6 @@ GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o Ghost-Linux-amd64 .
 GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -ldflags='-H=windowsgui' -o Ghost-Windows-amd64.exe .
 ```
 
-`directory/test_directory.py` verifies the signed, 128-byte, 30-minute, RAM-only TCP protocol. `directory_client_test.go` verifies Ghost client encoding and two independent nodes using a live Python directory. `direct_test.go` covers encrypted invite tamper/expiry, socket closure, independent nodes, two-way friend acceptance, and signaling over a single encrypted tunnel. `mesh_test.go` runs **two independent Go nodes with separate identity databases** and verifies mutual peer discovery by URL, cross-node friend requests/acceptance, online Call IDs, signaling in both directions, signed-message replay prevention, and node-key persistence. Optional real multicast test: `GHOST_TEST_LAN=1 go test -run TestLANMulticastDiscovery -v` (requires working multicast interface). Live WebRTC browser tests remain unverified in the existing sandbox.
+`discovery_flow_test.go` covers TCP/TLS/SNI, JSONL framing, malformed/oversized replies, cancellation, server errors, signed-value verification, identity pinning, and lease refresh. `network_diagnostics_test.go` verifies bounded, authenticated diagnostics. `mesh_test.go` runs **two independent Go nodes with separate identity databases** through the Python JSONL fixture, stops discovery after connection, then verifies friendship and signaling in both directions. `tests/discovery-browser.mjs` checks real WebRTC messages, audio, file bytes, and UI regression cases. The older `directory/test_directory.py` retains legacy binary-server tests.
 
 [Source](https://github.com/Cryosimorgh/Ghost) · [Releases](https://github.com/Cryosimorgh/Ghost/releases) · [Bug reports](https://github.com/Cryosimorgh/Ghost/issues)

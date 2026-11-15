@@ -29,11 +29,8 @@ jobs:
         run: |
           python3 -m pip install --quiet -r directory/requirements.txt
           python3 -m unittest discover -s directory -p 'test_*.py'
-          python3 directory/ghost_directory.py --bind 127.0.0.1 --publish-port 48591 --lookup-port 48592 --max-memory-mb 1 &
-          pid=$!
-          trap 'kill "$pid" 2>/dev/null || true' EXIT
-          sleep 0.5
-          GHOST_DIR_PUBLISH_PORT=48591 GHOST_DIR_LOOKUP_PORT=48592 go test -run TestPythonDirectoryAcrossIndependentNodes -v
+          python3 -m unittest discover -s tests -p 'test_*.py'
+          GHOST_TEST_PYTHON="$(command -v python3)" go test -run TestPythonJSONLDiscoveryRoutesFriendsAndSignals -v
       - run: node --check web/app.js
       - name: Generate Windows icon resource
         run: |

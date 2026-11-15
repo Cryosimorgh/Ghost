@@ -1,10 +1,12 @@
 package main
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -34,7 +36,7 @@ func TestNetworkSettingsAPIAndPersistence(t *testing.T) {
 		t.Fatalf("settings did not persist: %v %+v", err, loaded)
 	}
 	info, err := os.Stat(cfgPath)
-	if err != nil || info.Mode().Perm()&0077 != 0 {
+	if err != nil || (runtime.GOOS != "windows" && info.Mode().Perm()&0077 != 0) {
 		t.Fatalf("settings permissions: %v, %v", info, err)
 	}
 	cfg.PeerListen = "invalid"
@@ -56,8 +58,8 @@ func TestNetworkSettingsValidation(t *testing.T) {
 		name   string
 		change func(*NetworkSettings)
 	}{
-		{"wrong ports", func(c *NetworkSettings) { c.DirectoryPublishPort = c.DirectoryLookupPort }},
-		{"bad hostname", func(c *NetworkSettings) { c.DirectoryHost = "https://somewhere" }},
+		{"wrong ports", func(c *NetworkSettings) { c.DirectoryPublishPort = 65536 }},
+		{"bad hostname", func(c *NetworkSettings) { c.DirectoryHost = "https://user:password@somewhere" }},
 		{"bad listen", func(c *NetworkSettings) { c.PeerListen = "0.0.0.0:-1" }},
 		{"bad advertised URL", func(c *NetworkSettings) { c.PeerAdvertise = "https://public.example.com:8788" }},
 		{"missing cert", func(c *NetworkSettings) { c.PeerTLSCert = "/tmp/cert.pem" }},
@@ -90,5 +92,42 @@ func TestDirectoryCodeJSONPreservesFullPrecision(t *testing.T) {
 	got, ok := result["directoryCode"].(string)
 	if !ok || got != "4611686018427397927" {
 		t.Fatalf("code lost precision: %T %v", result["directoryCode"], result["directoryCode"])
+	}
+}
+
+func TestSavedDiscoveryURLMigratesToDocumentedStream(t *testing.T) {
+	cfg := defaultNetworkSettings()
+	cfg.DirectoryHost = "http://soulless.ai/v/api/ghost"
+	cfg.DirectoryPublishPort, cfg.DirectoryLookupPort, cfg.DirectoryTLS = 443, 443, false
+	path := filepath.Join(t.TempDir(), "network.json")
+	data, _ := json.Marshal(cfg)
+	if err := os.WriteFile(path, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := loadNetworkSettings(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.DirectoryHost != "www.soulless.ai" || loaded.DirectoryPublishPort != 443 || loaded.DirectoryLookupPort != 443 || loaded.DirectoryTLS {
+		t.Fatalf("stale HTTP settings did not migrate to the supplied TLS stream recipe: %+v", loaded)
+	}
+}
+
+func TestSavedDiscoverySettingsPreserveChosenPortAndTLS(t *testing.T) {
+	for _, host := range []string{"www.soulless.ai/v/api/ghost", "www.soulless.ai"} {
+		cfg := defaultNetworkSettings()
+		cfg.DirectoryHost = host
+		cfg.DirectoryPublishPort, cfg.DirectoryLookupPort, cfg.DirectoryTLS = 9443, 9443, false
+		path := filepath.Join(t.TempDir(), "network.json")
+		if err := saveNetworkSettings(path, cfg); err != nil {
+			t.Fatal(err)
+		}
+		got, err := loadNetworkSettings(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got != cfg {
+			t.Fatalf("saved settings changed across restart: got %+v, want %+v", got, cfg)
+		}
 	}
 }

@@ -64,6 +64,7 @@ type Hub struct {
 	turnURL, turnUser, turnPass string
 	mesh                        *Mesh
 	settings                    *settingsAPI
+	diagnostics                 *networkDiagnostics
 }
 type Friend struct {
 	ID     string `json:"id"`
@@ -110,7 +111,7 @@ func remove(xs []string, v string) []string {
 	return out
 }
 func newHub(path string) *Hub {
-	return &Hub{path: path, state: State{Users: make(map[string]*User)}, sessions: make(map[string]*Session), calls: make(map[string]*Session), stun: []string{"stun:stun.l.google.com:19302", "stun:stun.cloudflare.com:3478"}}
+	return &Hub{path: path, diagnostics: &networkDiagnostics{}, state: State{Users: make(map[string]*User)}, sessions: make(map[string]*Session), calls: make(map[string]*Session), stun: []string{"stun:stun.l.google.com:19302", "stun:stun.cloudflare.com:3478"}}
 }
 func (h *Hub) load() error {
 	b, err := os.ReadFile(h.path)
@@ -684,6 +685,7 @@ func (h *Hub) routes() http.Handler {
 	mux.HandleFunc("/api/register", h.register)
 	mux.HandleFunc("/api/me", h.me)
 	mux.HandleFunc("/api/config", h.config)
+	mux.HandleFunc("/api/network/logs", h.networkLogs)
 	if h.settings != nil {
 		mux.HandleFunc("/api/settings", func(w http.ResponseWriter, r *http.Request) { h.settings.handler(w, r, h) })
 		mux.HandleFunc("/api/settings/restart", func(w http.ResponseWriter, r *http.Request) { h.settings.restartHandler(w, r, h) })
@@ -759,10 +761,11 @@ func main() {
 	peerKey := flag.String("peer-tls-key", cfg.PeerTLSKey, "TLS private key for direct peer listener only")
 	meshEnabled := flag.Bool("peers", true, "enable direct node-to-node discovery and signaling")
 	lan := flag.Bool("lan", cfg.LAN, "enable multicast LAN peer discovery")
-	directoryHost := flag.String("directory-host", cfg.DirectoryHost, "optional rendezvous directory host (your own Python server); empty disables")
-	directoryPublishPort := flag.Int("directory-publish-port", cfg.DirectoryPublishPort, "directory publication TCP port")
-	directoryLookupPort := flag.Int("directory-lookup-port", cfg.DirectoryLookupPort, "directory lookup TCP port")
-	directoryTLS := flag.Bool("directory-tls", cfg.DirectoryTLS, "use trusted TLS for both directory sockets")
+	directoryHost := flag.String("directory-host", cfg.DirectoryHost, "JSONL discovery TCP hostname/IP or host/v/api/ghost address label; empty disables")
+	directoryPort := flag.Int("directory-port", cfg.DirectoryPublishPort, "discovery TCP stream port for JSONL set/get (e.g. 443)")
+	directoryPublishPort := flag.Int("directory-publish-port", cfg.DirectoryPublishPort, "deprecated alias; must match directory lookup port")
+	directoryLookupPort := flag.Int("directory-lookup-port", cfg.DirectoryLookupPort, "deprecated alias; must match directory publication port")
+	directoryTLS := flag.Bool("directory-tls", cfg.DirectoryTLS, "wrap discovery TCP in TLS with hostname/SNI and certificate verification")
 	data := flag.String("data", "ghost-data.json", "hub identity and friend mailbox database (not message history)")
 	cert := flag.String("tls-cert", "", "TLS certificate PEM (for remote mic access)")
 	key := flag.String("tls-key", "", "TLS private key PEM")
@@ -771,6 +774,11 @@ func main() {
 	turnUser := flag.String("turn-user", cfg.TURNUser, "TURN username")
 	turnPass := flag.String("turn-pass", cfg.TURNPass, "TURN credential")
 	flag.Parse()
+	flag.Visit(func(f *flag.Flag) {
+		if f.Name == "directory-port" {
+			*directoryPublishPort, *directoryLookupPort = *directoryPort, *directoryPort
+		}
+	})
 	if (*peerCert == "") != (*peerKey == "") {
 		log.Fatal("Provide both -peer-tls-cert and -peer-tls-key")
 	}
@@ -787,6 +795,9 @@ func main() {
 		log.Fatalf("Invalid network configuration: %v", err)
 	}
 	h := newHub(*data)
+	if err := h.diagnostics.enableFile(*data + ".network.log"); err != nil {
+		log.Printf("Network log file unavailable; in-app diagnostics remain active: %v", err)
+	}
 	h.settings = &settingsAPI{path: settingsPath, active: activeCfg}
 	if err := h.load(); err != nil {
 		log.Fatalf("Cannot load hub state: %v", err)
@@ -815,6 +826,7 @@ func main() {
 			if derr != nil {
 				log.Fatal(derr)
 			}
+			directory.diagnostics = h.diagnostics
 			if *advertise == "" {
 				log.Print("directory configured without -peer-advertise: lookup only; not publishing a loopback address")
 			}

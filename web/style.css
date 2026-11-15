@@ -296,3 +296,6 @@ body{font-size:13px}
  .input-with-button button{padding:9px 8px;font-size:10px}
 }
 @media(prefers-reduced-motion:reduce){.primary-nav button{transition:none}}
+.diagnostic-actions{display:flex;gap:10px;flex-wrap:wrap}
+#networkLogOutput{margin:0;max-height:340px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;font:11px/1.7 monospace;color:#c2dccb;background:#0e1818;border:1px solid #304039;border-radius:8px;padding:14px;min-width:0}
+#networkLogFile{overflow-wrap:anywhere}

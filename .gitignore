@@ -4,6 +4,7 @@
 # Build outputs
 Ghost.exe
 Ghost-console.exe
+Ghost-updated.exe
 Ghost-linux-amd64
 *.syso
 *.zip
@@ -12,3 +13,6 @@ Ghost-linux-amd64
 
 # Private node signing key (NEVER commit)
 *.nodekey
+*.network.log
+*.network.log.1
+__pycache__/

@@ -1,5 +1,7 @@
 # Ghost rendezvous directory (Python)
 
+> Legacy binary protocol reference. The desktop client now uses the existing JSONL key/value discovery service over TLS TCP. See [current discovery setup](../DISCOVERY.md). This older two-port binary server is not the service used by the desktop client.
+
 **A public address book, not a communication relay.** The server has exactly two TCP sockets, stores signed 128-byte advertisements **only in RAM**, and expires them after **30 minutes**. No database, accounts, message history, files, or Go/Java/Node runtime.
 
 ## Host it

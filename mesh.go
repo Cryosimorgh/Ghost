@@ -60,24 +60,26 @@ type MeshPeer struct {
 	Users               []MeshUser   `json:"users"`
 }
 type Mesh struct {
-	h             *Hub
-	private       ed25519.PrivateKey
-	public        string
-	listener      net.Listener
-	http          *http.Server
-	url           string
-	port          int
-	mu            sync.RWMutex
-	peers         map[string]*MeshPeer // keyed by peer public key
-	nonces        map[string]time.Time
-	acks          map[string]map[string]bool
-	client        *http.Client
-	directory     *directoryClient
-	directoryCode int64
-	stop          chan struct{}
-	directMu      sync.Mutex
-	direct        map[string]*directSession
-	invite        *directPendingInvite
+	h               *Hub
+	private         ed25519.PrivateKey
+	public          string
+	listener        net.Listener
+	http            *http.Server
+	url             string
+	port            int
+	mu              sync.RWMutex
+	peers           map[string]*MeshPeer // keyed by peer public key
+	nonces          map[string]time.Time
+	acks            map[string]map[string]bool
+	client          *http.Client
+	directory       *directoryClient
+	directoryCode   int64
+	directoryStatus string
+	directoryError  string
+	stop            chan struct{}
+	directMu        sync.Mutex
+	direct          map[string]*directSession
+	invite          *directPendingInvite
 }
 
 func meshKey(path string) (ed25519.PrivateKey, error) {
@@ -116,7 +118,7 @@ func meshKey(path string) (ed25519.PrivateKey, error) {
 }
 func newMesh(h *Hub, private ed25519.PrivateKey) *Mesh {
 	key := base64.RawURLEncoding.EncodeToString(private.Public().(ed25519.PublicKey))
-	return &Mesh{h: h, private: private, public: key, peers: make(map[string]*MeshPeer), nonces: make(map[string]time.Time), acks: make(map[string]map[string]bool), stop: make(chan struct{}), direct: make(map[string]*directSession), client: &http.Client{Timeout: 4 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}
+	return &Mesh{h: h, private: private, public: key, peers: make(map[string]*MeshPeer), nonces: make(map[string]time.Time), acks: make(map[string]map[string]bool), stop: make(chan struct{}), direct: make(map[string]*directSession), client: &http.Client{Transport: networkHTTPTransport(), Timeout: 4 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}
 }
 func (m *Mesh) activeUsers() []MeshUser {
 	m.h.mu.Lock()
@@ -372,26 +374,31 @@ func (m *Mesh) connect(ctx context.Context, raw string, introduce bool) error {
 	return m.connectPinned(ctx, raw, "", introduce)
 }
 func (m *Mesh) connectPinned(ctx context.Context, raw, expectedKey string, introduce bool) error {
+	ctx, trace := m.h.diagnostics.begin(ctx, "peer.connect")
 	normalized, err := safePeerURL(raw)
 	if err != nil {
-		return err
+		return trace.fail("peer.address", err)
 	}
+	trace.event("peer.hello", "start", "GET "+normalized+"/p2p/hello; requesting signed identity challenge")
 	hello, err := m.getHello(ctx, normalized)
 	if err != nil {
-		return err
+		return trace.fail("peer.hello", err)
 	}
 	if expectedKey != "" && hello.Key != expectedKey {
-		return errors.New("peer key does not match signed directory advertisement")
+		return trace.fail("peer.identity", errors.New("peer key does not match signed directory advertisement"))
 	}
+	trace.event("peer.identity", "ok", "Signed peer identity verified")
 	if err = m.addPeer(normalized, hello); err != nil {
-		return err
+		return trace.fail("peer.register", err)
 	}
 	if introduce {
+		trace.event("peer.poll", "start", "Establishing signed bidirectional signaling")
 		if err = m.pollOne(ctx, normalized, hello.Key); err != nil {
-			return err
+			return trace.fail("peer.poll", err)
 		}
 		m.persistPeer(hello.Key, normalized)
 	}
+	trace.event("peer.connect", "ok", "Peer handshake and signaling established at "+normalized)
 	return nil
 }
 func (m *Mesh) meshRoutes() http.Handler {
@@ -612,6 +619,7 @@ func (m *Mesh) apiStatus(w http.ResponseWriter, r *http.Request) {
 	sort.Slice(out, func(i, j int) bool { return out[i].URL < out[j].URL })
 	m.mu.RLock()
 	code, enabled := m.directoryCode, m.directory != nil
+	directoryStatus, directoryError := m.directoryStatus, m.directoryError
 	m.mu.RUnlock()
 	m.directMu.Lock()
 	links := len(m.direct)
@@ -622,7 +630,7 @@ func (m *Mesh) apiStatus(w http.ResponseWriter, r *http.Request) {
 	if code > 0 {
 		codeText = strconv.FormatInt(code, 10)
 	}
-	sendJSON(w, 200, map[string]any{"directLinks": links, "directInviteOpen": inviteOpen, "peers": out, "nodeKey": m.public, "address": m.url, "addresses": m.addresses(), "directoryCode": codeText, "directoryEnabled": enabled, "discovery": "LAN multicast + optional short-lived rendezvous directory"})
+	sendJSON(w, 200, map[string]any{"directLinks": links, "directInviteOpen": inviteOpen, "peers": out, "nodeKey": m.public, "address": m.url, "addresses": m.addresses(), "directoryCode": codeText, "directoryEnabled": enabled, "directoryStatus": directoryStatus, "directoryError": directoryError, "discovery": "LAN multicast + optional short-lived rendezvous directory"})
 }
 func (m *Mesh) apiConnect(w http.ResponseWriter, r *http.Request) {
 	if !method(w, r, "POST") {
@@ -637,7 +645,8 @@ func (m *Mesh) apiConnect(w http.ResponseWriter, r *http.Request) {
 	if !decodeBody(w, r, &q) {
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), 7*time.Second)
+	ctx, trace := m.h.diagnostics.begin(r.Context(), "discovery.connect")
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 	address := strings.TrimSpace(q.Address)
 	expected := ""
@@ -651,7 +660,7 @@ func (m *Mesh) apiConnect(w http.ResponseWriter, r *http.Request) {
 		d := m.directory
 		m.mu.RUnlock()
 		if d == nil {
-			http.Error(w, "configure -directory-host to resolve codes", 400)
+			http.Error(w, trace.fail("directory.config", errors.New("configure the discovery server in Settings to resolve codes")).Error(), 400)
 			return
 		}
 		var errResolve error
@@ -665,10 +674,16 @@ func (m *Mesh) apiConnect(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), 400)
 		return
 	}
-	sendJSON(w, 200, map[string]bool{"ok": true})
+	sendJSON(w, 200, map[string]any{"ok": true, "attempt": trace.id})
 }
 func (m *Mesh) sendSignal(ctx context.Context, peer *MeshPeer, from *Session, name, to, kind string, data json.RawMessage) error {
-	return m.post(ctx, peer, "/p2p/signal", map[string]any{"from": from.UserID, "fromCall": from.CallID, "to": to, "kind": kind, "data": data})
+	ctx, trace := m.h.diagnostics.begin(ctx, "peer.signal")
+	trace.event("peer.signal", "start", "Sending signaling event (payload omitted)")
+	if err := m.post(ctx, peer, "/p2p/signal", map[string]any{"from": from.UserID, "fromCall": from.CallID, "to": to, "kind": kind, "data": data}); err != nil {
+		return trace.fail("peer.signal", err)
+	}
+	trace.event("peer.signal", "ok", "Signaling event delivered or queued for outbound polling")
+	return nil
 }
 func (m *Mesh) refresh(ctx context.Context) {
 	m.mu.RLock()
@@ -776,6 +791,7 @@ func (m *Mesh) start(addr, advertise, cert, key string, discover bool) error {
 	return nil
 }
 func (m *Mesh) close() {
+	m.client.CloseIdleConnections()
 	m.closeDirect()
 	select {
 	case <-m.stop:
@@ -1167,7 +1183,9 @@ func (m *Mesh) pollLoop() {
 			m.mu.RUnlock()
 			for _, p := range ps {
 				ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
-				if err := m.pollOne(ctx, p.URL, p.Key); err != nil { /* will retry */
+				if err := m.pollOne(ctx, p.URL, p.Key); err != nil {
+					_, trace := m.h.diagnostics.begin(ctx, "peer.poll.retry")
+					_ = trace.fail("peer.poll.retry", err)
 				}
 				cancel()
 			}
